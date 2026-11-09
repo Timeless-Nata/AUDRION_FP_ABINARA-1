@@ -1,8 +1,0 @@
-prefix=/home/nata-negara/catkin_ws/install
-
-Name: autonomous_manipulator
-Description: Description of autonomous_manipulator
-Version: 1.0.0
-Cflags: -I${prefix}/include
-Libs: -L${prefix}/lib 
-Requires: roscpp std_msgs std_srvs geometry_msgs sensor_msgs rosgraph_msgs message_runtime

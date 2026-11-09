@@ -1,1 +1,0 @@
-/usr/bin/c++    -rdynamic CMakeFiles/test_kinematics.dir/test/test_kinematics.cpp.o  -o /home/nata-negara/catkin_ws/devel/lib/autonomous_manipulator/test_kinematics  -Wl,-rpath,/usr/local/lib:/home/nata-negara/catkin_ws/devel/lib /home/nata-negara/catkin_ws/devel/lib/libam_core.so 
