@@ -1,0 +1,2 @@
+autonomous_manipulator
+-DMUJOCO_DIR= -DCATKIN_DEVEL_PREFIX=/home/nata-negara/catkin_ws/devel -DCMAKE_INSTALL_PREFIX=/home/nata-negara/catkin_ws/install -G Unix Makefiles

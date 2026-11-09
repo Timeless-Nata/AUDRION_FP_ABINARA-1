@@ -1,0 +1,42 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/include/autonomous_manipulator/math_utils.hpp
+algorithm
+-
+array
+-
+cmath
+-
+
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/include/autonomous_manipulator/robot_model.hpp
+array
+-
+string
+-
+autonomous_manipulator/math_utils.hpp
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/include/autonomous_manipulator/autonomous_manipulator/math_utils.hpp
+
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/include/autonomous_manipulator/trajectory_planner.hpp
+string
+-
+vector
+-
+autonomous_manipulator/robot_model.hpp
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/include/autonomous_manipulator/autonomous_manipulator/robot_model.hpp
+
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/test/test_kinematics.cpp
+cstdio
+-
+cstdlib
+-
+autonomous_manipulator/robot_model.hpp
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/test/autonomous_manipulator/robot_model.hpp
+autonomous_manipulator/trajectory_planner.hpp
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/test/autonomous_manipulator/trajectory_planner.hpp
+

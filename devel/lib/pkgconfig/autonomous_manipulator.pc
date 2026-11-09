@@ -1,0 +1,8 @@
+prefix=/home/nata-negara/catkin_ws/devel
+
+Name: autonomous_manipulator
+Description: Description of autonomous_manipulator
+Version: 1.0.0
+Cflags: -I/home/nata-negara/catkin_ws/devel/include
+Libs: -L${prefix}/lib 
+Requires: roscpp std_msgs std_srvs geometry_msgs sensor_msgs rosgraph_msgs message_runtime

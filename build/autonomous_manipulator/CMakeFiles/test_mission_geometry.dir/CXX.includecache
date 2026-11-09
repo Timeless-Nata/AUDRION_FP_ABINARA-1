@@ -1,0 +1,40 @@
+#IncludeRegexLine: ^[ 	]*[#%][ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/include/autonomous_manipulator/geometry_utils.hpp
+cmath
+-
+autonomous_manipulator/robot_model.hpp
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/include/autonomous_manipulator/autonomous_manipulator/robot_model.hpp
+
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/include/autonomous_manipulator/math_utils.hpp
+algorithm
+-
+array
+-
+cmath
+-
+
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/include/autonomous_manipulator/robot_model.hpp
+array
+-
+string
+-
+autonomous_manipulator/math_utils.hpp
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/include/autonomous_manipulator/autonomous_manipulator/math_utils.hpp
+
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/test/test_mission_geometry.cpp
+cstdio
+-
+vector
+-
+autonomous_manipulator/geometry_utils.hpp
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/test/autonomous_manipulator/geometry_utils.hpp
+autonomous_manipulator/robot_model.hpp
+/home/nata-negara/catkin_ws/src/autonomous_manipulator/test/autonomous_manipulator/robot_model.hpp
+

@@ -1,0 +1,85 @@
+# All tunables of the project. Loaded into the /am namespace by simulation.launch.
+# Frames: world frame = MuJoCo world, origin on the floor under the robot base, +Z up. Units: metres / radians.
+am:
+  sim:
+    realtime_factor: 1.0          # <1 slows the simulation down (useful on weak GPUs)
+    image_width: 640
+    image_height: 480
+    camera_rate_hz: 10.0
+    state_rate_hz: 100.0
+    camera_name: color_cam
+    camera_fovy_deg: 20.0         # <camera name="color_cam" fovy="20"> in the MJCF (used to build the intrinsics)
+    # arm joints at start-up {hip, shoulder, arm, hand}: level hand, ee ~ (0.36,0,0.15)  (pitch = s+a+w = 0)
+    initial_joints: [0.0, -0.9, 1.5, -0.6]
+    initial_finger: 0.9           # fingers open
+
+  perception:
+    plane_z: 0.074                # top face of an upright dumbbell (2*(0.031+0.006)); ray/plane intersection height
+    roi_u_max: 360                # columns right of this are blocked by the gripper_extension box in the camera view
+    min_area_px: 120
+    min_fill_ratio: 0.30
+    top_face_v_ratio: 0.85        # keep pixels brighter than this fraction of the blob's max V (top face is lit from above)
+    min_radius: 0.15              # reject detections closer to the base axis than this (robot's own light-grey parts)
+    max_radius: 0.50
+    max_joint_speed: 0.02         # [rad/s] frames taken while the arm moves are discarded
+    max_state_skew: 0.05          # [s] allowed |image stamp - joint state stamp|
+    color_names: [orange, green, white, yellow]
+    # OpenCV HSV: H 0..179, S/V 0..255.   (orange = rgba 1 .5 0, green = .1 .7 .2, white = .95 .95 .95)
+    colors:
+      orange: {lower: [5, 120, 80],  upper: [25, 255, 255]}
+      yellow: {lower: [26, 100, 100], upper: [36, 255, 255]}
+      green:  {lower: [40, 80, 40],  upper: [90, 255, 255]}
+      white:  {lower: [0, 0, 170],   upper: [179, 45, 255]}
+
+  mission:
+    # ---- pyramid specification (bottom -> top) ----
+    level_colors: [orange, green, white]   # base = 3 orange, middle = 2 green, top = 1 white (matches the six bodies in the XML)
+    level_counts: [3, 2, 1]
+    stack_center_xy: [0.0590, 0.3348]      # base-row centre: radius 0.34 m, azimuth +80 deg (free sector beyond the object arc)
+    slot_spacing: 0.046                    # centre distance inside a row (plate width 0.036 -> 10 mm gap; level-2 plates overlap 13 mm)
+    piece_height: 0.074                    # dumbbell height: 2*(0.031 + 0.006)
+    piece_center_z: 0.037                  # body-origin height of a dumbbell standing on its end
+    # ---- scanning (camera is hand-mounted, fovy 20 deg: scan station by station) ----
+    scan_azimuths_deg: [-64, -52, -40, -28, -16, -4, 8, 20, 32, 44, 56, 68]
+    scan_aim_radii: [0.28, 0.32, 0.30]     # tried in this order until every colour count is satisfied
+    scan_pitch_deg: 80.0                   # camera looks almost straight down
+    scan_distance: 0.20                    # camera-to-aim-point distance
+    scan_u_star: 170.0                     # aim pixel column (left half of the image is not occluded by the gripper)
+    observe_frames: 5
+    merge_distance: 0.03
+    # ---- grasp ----
+    grasp_mode: contact                    # contact | weld_assist (see README)
+    grasp_z_offset: -0.002                 # ring centre relative to the dumbbell centre
+    carry_dz_contact: 0.017                # object hangs this far below the ee after the ring hooks under the top plate
+    carry_dz_weld: -0.002
+    pre_dist_max: 0.030                    # level pre-grasp distance before the bar centre (reduced for r < 0.275, see code)
+    min_level_radius: 0.245                # smallest ee radius reachable with a level hand at table height
+    standoff_back: 0.05
+    standoff_up: 0.03                      # transit waypoint above the standoff (limited by the shoulder joint range)
+    standoff_tilt_candidates: [0.30, 0.40, 0.20]
+    lift_engage: 0.03
+    lift_height: 0.11
+    use_ultrasonic: true
+    us_origin_to_ee: 0.058                 # = ee_x - ultrasonic_x in the hand frame (0.110 - 0.052)
+    us_plate_half_extent: 0.0217           # mean distance bar-centre -> plate face along the beam (0.018..0.0255)
+    us_max_correction: 0.015
+    object_mass: 0.0411                    # kg (MuJoCo default density 1000 * model volume)
+    effort_fraction: 0.40                  # grasp verified if |delta shoulder effort| >= fraction * m*g*lever
+    effort_min: 0.02                       # [N m]
+    gripper_open: 0.9
+    gripper_closed: 0.0
+    # ---- motion ----
+    joint_vmax: [0.8, 0.8, 0.9, 1.2]       # [rad/s] (peak velocity of the quintic profile)
+    cart_speed_fast: 0.10
+    cart_speed_slow: 0.03
+    cart_speed_final: 0.015
+    transport_min_z: 0.145
+    transport_clearance: 0.015
+    hover_above_place: 0.02
+    retract_dist: 0.05
+    collision_margin: 0.002
+    # camera viewpoints tried (flat triples: pitch_deg, camera-to-top-face distance, aim pixel column); higher pyramid
+    # levels need a flatter camera because of the shoulder joint range
+    verify_views: [80, 0.14, 170,  70, 0.14, 170,  70, 0.20, 170,  60, 0.14, 170,  60, 0.20, 170,  50, 0.14, 170,  50, 0.20, 170,  40, 0.14, 170]
+    verify_tolerance: 0.02
+    max_pick_retries: 2

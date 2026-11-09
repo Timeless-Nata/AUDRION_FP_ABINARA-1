@@ -1,0 +1,143 @@
+<?xml version='1.0' encoding='utf-8'?>
+<!-- Original model by the team. ONLY change: the <equality> block at the end (optional, inactive weld constraints used
+     exclusively when mission/grasp_mode == weld_assist). Geometry, joints, actuators and sensors are untouched. -->
+<mujoco model="arm_gripper_dumbbells">
+  <compiler angle="radian" autolimits="true" />
+  <option gravity="0 0 -9.81" timestep="0.001" integrator="implicitfast" />
+  <statistic center="0.2 0 0.1" extent="0.6" />
+  <default>
+    <joint damping="0.3" />
+    <geom rgba="0.75 0.75 0.78 1" />
+  </default>
+  <worldbody>
+    <light pos="0.3 0 1" dir="-0.3 0 -1" diffuse="0.8 0.8 0.8" />
+    <geom name="floor" type="plane" size="2 2 0.1" rgba="0.5 0.5 0.5 1" />
+    <body name="base">
+      <geom type="box" size="0.075 0.075 0.005" pos="0 0 0.025" rgba="0.15 0.15 0.17 1" />
+      <geom type="box" size="0.065 0.065 0.03" pos="0 0 0.06" />
+      <body name="rotator" pos="0 0 0.095" gravcomp="1">
+        <joint name="hip" type="hinge" axis="0 0 1" range="-1.5708 1.5708" />
+        <geom type="cylinder" size="0.06 0.005" rgba="0.6 0.62 0.65 1" />
+        <geom type="box" size="0.04 0.01 0.035" pos="0 0.029 0.04" />
+        <geom type="box" size="0.04 0.01 0.035" pos="0 -0.029 0.04" />
+        <body name="upper_arm" pos="0.02 0 0.053" gravcomp="1">
+          <joint name="shoulder" type="hinge" axis="0 1 0" range="-1.5708 1.5708" />
+          <geom type="cylinder" fromto="-0.01 0 0 0.15 0 0" size="0.016" />
+          <body name="lower_arm" pos="0.136294 0.032 0" gravcomp="1">
+            <joint name="arm" type="hinge" axis="0 1 0" range="0 3" />
+            <geom type="cylinder" fromto="-0.01 0 0 0.21 0 0" size="0.016" />
+            <body name="base_hand" pos="0.18 -0.036 0" gravcomp="1">
+              <joint name="hand" type="hinge" pos="0.0075 0 0" axis="0 1 0" range="-1.5708 1.5708" />
+              <geom type="box" size="0.015 0.02 0.01" pos="0.015 0 0" rgba="0.15 0.15 0.17 1" />
+              <site name="ee" pos="0.11 0 0" size="0.003" rgba="1 0 0 1" />
+              <body name="ultrasonic" pos="0.052 0 0.034" gravcomp="1">
+                <geom type="box" size="0.001 0.018 0.008" pos="-0.009 0 0" rgba="0.1 0.25 0.6 1" contype="0" conaffinity="0" />
+                <geom type="cylinder" fromto="-0.008 0.009 0 0 0.009 0" size="0.0065" rgba="0.85 0.85 0.88 1" contype="0" conaffinity="0" />
+                <geom type="cylinder" fromto="-0.008 -0.009 0 0 -0.009 0" size="0.0065" rgba="0.85 0.85 0.88 1" contype="0" conaffinity="0" />
+                <geom type="box" size="0.0125 0.006 0.002" pos="-0.0215 0 -0.006" rgba="0.15 0.15 0.17 1" contype="0" conaffinity="0" />
+                <geom type="box" size="0.005 0.006 0.012" pos="-0.029 0 -0.012" rgba="0.15 0.15 0.17 1" contype="0" conaffinity="0" />
+                <site name="ultrasonic_site" pos="0 0 0" zaxis="1 0 0" size="0.002" rgba="0 1 1 1" />
+              </body>
+              <body name="color_sensor" pos="0.0305 0.0145 0" gravcomp="1">
+                <geom type="box" size="0.0005 0.004 0.006" rgba="0.7 0.1 0.1 1" contype="0" conaffinity="0" />
+                <site name="color_site" pos="0 0 0" zaxis="1 0 0" size="0.002" rgba="1 0 1 1" />
+                <camera name="color_cam" pos="0.0006 0 0" xyaxes="0 -1 0 0 0 1" fovy="20" />
+              </body>
+              <body name="jaw_upper" pos="0.10 0 0" gravcomp="1" euler="1.5708 0 0">
+                <joint name="finger1" type="hinge" axis="0 -1 0" range="0 0.9" damping="0.002" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.00026 0 0.00229" euler="0 1.79769 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.00184 0 0.00585" euler="0 2.18166 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.00464 0 0.00855" euler="0 2.56563 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.00825 0 0.01001" euler="0 2.94961 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.01215 0 0.01001" euler="0 -2.94961 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.01576 0 0.00855" euler="0 -2.56563 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.01856 0 0.00585" euler="0 -2.18166 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.02014 0 0.00229" euler="0 -1.79769 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+              </body>
+              <body name="jaw_lower" pos="0.10 0 0" gravcomp="1" euler="1.5708 0 0">
+                <joint name="finger2" type="hinge" axis="0 1 0" range="0 0.9" damping="0.002" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.00026 0 -0.00229" euler="0 -1.79769 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.00184 0 -0.00585" euler="0 -2.18166 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.00464 0 -0.00855" euler="0 -2.56563 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.00825 0 -0.01001" euler="0 -2.94961 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.01215 0 -0.01001" euler="0 2.94961 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.01576 0 -0.00855" euler="0 2.56563 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.01856 0 -0.00585" euler="0 2.18166 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+                <geom type="box" size="0.00208 0.008 0.002" pos="0.02014 0 -0.00229" euler="0 1.79769 0" mass="0.002" friction="1.2 0.005 0.0001" rgba="0.6 0.62 0.65 1" />
+              </body>
+              <geom name="gripper_extension" type="box" size="0.035 0.012 0.006" pos="0.065 0 0" rgba="0.15 0.15 0.17 1" />
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="dumbbell_1_orange" pos="0.15 -0.25981 0.037" quat="0.61237200 0.61237200 -0.35355414 -0.35355414">
+      <freejoint />
+      <geom name="d1_bar" type="cylinder" fromto="0 -0.025 0 0 0.025 0" size="0.008" rgba="1 0.5 0 1" />
+      <geom name="d1_plate_a" type="box" size="0.018 0.006 0.018" pos="0 -0.031 0" rgba="1 0.5 0 1" />
+      <geom name="d1_plate_b" type="box" size="0.018 0.006 0.018" pos="0 0.031 0" rgba="1 0.5 0 1" />
+    </body>
+    <body name="dumbbell_2_green" pos="0.21034 -0.15282 0.037" quat="0.67249835 0.67249835 -0.21850851 -0.21850851">
+      <freejoint />
+      <geom name="d2_bar" type="cylinder" fromto="0 -0.025 0 0 0.025 0" size="0.008" rgba="0.1 0.7 0.2 1" />
+      <geom name="d2_plate_a" type="box" size="0.018 0.006 0.018" pos="0 -0.031 0" rgba="0.1 0.7 0.2 1" />
+      <geom name="d2_plate_b" type="box" size="0.018 0.006 0.018" pos="0 0.031 0" rgba="0.1 0.7 0.2 1" />
+    </body>
+    <body name="dumbbell_3_orange" pos="0.29344 -0.06237 0.037" quat="0.70323316 0.70323316 -0.07391296 -0.07391296">
+      <freejoint />
+      <geom name="d3_bar" type="cylinder" fromto="0 -0.025 0 0 0.025 0" size="0.008" rgba="1 0.5 0 1" />
+      <geom name="d3_plate_a" type="box" size="0.018 0.006 0.018" pos="0 -0.031 0" rgba="1 0.5 0 1" />
+      <geom name="d3_plate_b" type="box" size="0.018 0.006 0.018" pos="0 0.031 0" rgba="1 0.5 0 1" />
+    </body>
+    <body name="dumbbell_4_white" pos="0.25432 0.05406 0.037" quat="0.70323316 0.70323316 0.07391296 0.07391296">
+      <freejoint />
+      <geom name="d4_bar" type="cylinder" fromto="0 -0.025 0 0 0.025 0" size="0.008" rgba="0.95 0.95 0.95 1" />
+      <geom name="d4_plate_a" type="box" size="0.018 0.006 0.018" pos="0 -0.031 0" rgba="0.95 0.95 0.95 1" />
+      <geom name="d4_plate_b" type="box" size="0.018 0.006 0.018" pos="0 0.031 0" rgba="0.95 0.95 0.95 1" />
+    </body>
+    <body name="dumbbell_5_green" pos="0.24271 0.17634 0.037" quat="0.67249835 0.67249835 0.21850851 0.21850851">
+      <freejoint />
+      <geom name="d5_bar" type="cylinder" fromto="0 -0.025 0 0 0.025 0" size="0.008" rgba="0.1 0.7 0.2 1" />
+      <geom name="d5_plate_a" type="box" size="0.018 0.006 0.018" pos="0 -0.031 0" rgba="0.1 0.7 0.2 1" />
+      <geom name="d5_plate_b" type="box" size="0.018 0.006 0.018" pos="0 0.031 0" rgba="0.1 0.7 0.2 1" />
+    </body>
+    <body name="dumbbell_6_orange" pos="0.13 0.22517 0.037" quat="0.61237200 0.61237200 0.35355414 0.35355414">
+      <freejoint />
+      <geom name="d6_bar" type="cylinder" fromto="0 -0.025 0 0 0.025 0" size="0.008" rgba="1 0.5 0 1" />
+      <geom name="d6_plate_a" type="box" size="0.018 0.006 0.018" pos="0 -0.031 0" rgba="1 0.5 0 1" />
+      <geom name="d6_plate_b" type="box" size="0.018 0.006 0.018" pos="0 0.031 0" rgba="1 0.5 0 1" />
+    </body>
+  </worldbody>
+  <contact>
+    <exclude body1="jaw_upper" body2="jaw_lower" />
+  </contact>
+  <!-- MODIFICATION (optional feature): welds hand<->dumbbell. All inactive at load time; the simulation node switches one
+       on (through /sim/grasp_weld) only after the mission asked for it, and writes the CURRENT relative pose into the
+       constraint so nothing teleports. Unused in the default 'contact' grasp mode. -->
+  <equality>
+    <weld name="weld_d1" body1="base_hand" body2="dumbbell_1_orange" active="false" />
+    <weld name="weld_d2" body1="base_hand" body2="dumbbell_2_green" active="false" />
+    <weld name="weld_d3" body1="base_hand" body2="dumbbell_3_orange" active="false" />
+    <weld name="weld_d4" body1="base_hand" body2="dumbbell_4_white" active="false" />
+    <weld name="weld_d5" body1="base_hand" body2="dumbbell_5_green" active="false" />
+    <weld name="weld_d6" body1="base_hand" body2="dumbbell_6_orange" active="false" />
+  </equality>
+  <actuator>
+    <position name="hip_act" joint="hip" kp="15" kv="1.5" />
+    <position name="shoulder_act" joint="shoulder" kp="40" kv="4" />
+    <position name="arm_act" joint="arm" kp="25" kv="1" />
+    <position name="hand_act" joint="hand" kp="2" kv="0.03" />
+    <position name="finger1_act" joint="finger1" kp="0.3" kv="0.004" ctrlrange="0 0.9" forcerange="-0.05 0.05" />
+    <position name="finger2_act" joint="finger2" kp="0.3" kv="0.004" ctrlrange="0 0.9" forcerange="-0.05 0.05" />
+  </actuator>
+  <sensor>
+    <jointpos name="hip_pos" joint="hip" />
+    <jointpos name="shoulder_pos" joint="shoulder" />
+    <jointpos name="arm_pos" joint="arm" />
+    <jointpos name="hand_pos" joint="hand" />
+    <jointpos name="finger1_pos" joint="finger1" />
+    <jointpos name="finger2_pos" joint="finger2" />
+    <framepos name="ee_pos" objtype="site" objname="ee" />
+    <rangefinder name="ultrasonic_range" site="ultrasonic_site" />
+  </sensor>
+</mujoco>
