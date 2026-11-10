@@ -61,7 +61,7 @@ am:
     lift_height: 0.11
     use_ultrasonic: true
     us_origin_to_ee: 0.058                 # = ee_x - ultrasonic_x in the hand frame (0.110 - 0.052)
-    us_plate_half_extent: 0.0217           # mean distance bar-centre -> plate face along the beam (0.018..0.0255)
+    us_plate_half_extent: 0.018           # mean distance bar-centre -> plate face along the beam (0.018..0.0255)
     us_max_correction: 0.015
     object_mass: 0.0411                    # kg (MuJoCo default density 1000 * model volume)
     effort_fraction: 0.40                  # grasp verified if |delta shoulder effort| >= fraction * m*g*lever
@@ -77,7 +77,7 @@ am:
     transport_clearance: 0.015
     hover_above_place: 0.02
     retract_dist: 0.05
-    collision_margin: 0.002
+    collision_margin: 0.001
     # camera viewpoints tried (flat triples: pitch_deg, camera-to-top-face distance, aim pixel column); higher pyramid
     # levels need a flatter camera because of the shoulder joint range
     verify_views: [80, 0.14, 170,  70, 0.14, 170,  70, 0.20, 170,  60, 0.14, 170,  60, 0.20, 170,  50, 0.14, 170,  50, 0.20, 170,  40, 0.14, 170]

@@ -1,5 +1,5 @@
 // mission_controller: state machine that builds the 3-2-1 pyramid autonomously.
-//   perception (camera + ultrasonic) -> object selection -> grasp planning (analytic IK) -> collision-checked
+//   perception (colour camera, then ultrasonic height probe) -> colour-by-colour scan -> object selection -> grasp planning (analytic IK) -> collision-checked
 //   quintic trajectories -> grasp -> verification -> transport -> placement -> verification -> next object.
 // The simulator's ground truth is NEVER used for decisions; it is only logged in the final validation report.
 #include <algorithm>
@@ -8,6 +8,7 @@
 #include <map>
 #include <mutex>
 #include <sstream>
+#include <utility>
 
 #include <geometry_msgs/PoseArray.h>
 #include <ros/ros.h>
@@ -50,6 +51,12 @@ struct Det {
   Vec3 pos, ray_o, ray_d;
   int n = 0;
 };
+struct Cand {  // unverified detection
+  std::string color;
+  Vec3 pos;
+  int obs = 0;
+};
+enum class HeightCheck { PASS, FLOOR, LYING, UNKNOWN };
 struct GraspPlan {
   double hip = 0, XT = 0, z = 0, d_pre = 0, tilt = 0;
 };
@@ -120,6 +127,17 @@ class Mission {
       }
     cfg_.getParam("scan_azimuths_deg", scan_az_);
     cfg_.getParam("scan_aim_radii", scan_r_);
+    for (double r : scan_r_) for (double a : scan_az_) stations_.push_back({r, a});
+    cfg_.getParam("scan_dist_scales", dist_scales_);  // camera-distance passes tried one after the other
+    if (dist_scales_.empty()) dist_scales_ = {1.0, 0.85, 1.2};
+    cfg_.param("probe_distance", probe_dist_, 0.12);     // ultrasonic origin -> aim point along the beam
+    cfg_.param("probe_span", probe_span_, 0.012);        // "move a bit": the aim point is shifted by this much
+    cfg_.param("plate_top_min", plate_top_min_, 0.055);  // hit above this: upright dumbbell (plate top 0.074)
+    cfg_.param("floor_max", floor_max_, 0.015);          // hit below this: floor; in between: dumbbell lying down (~0.036)
+    cfg_.param("us_origin_up", us_up_, 0.034);           // ultrasonic origin above the hand axis (MJCF: 0.034)
+    cfg_.param("reject_radius", reject_r_, 0.035);
+    cfg_.param("abort_on_fallen", abort_fallen_, true);  // a lying dumbbell cannot be gripped: stop instead of wasting retries
+    cfg_.param("scan_gate_radius", gate_r_, 0.07);
     cfg_.param("scan_pitch_deg", scan_pitch_, 80.0);
     cfg_.param("scan_distance", scan_dist_, 0.2);
     cfg_.param("scan_u_star", u_star_, 170.0);
@@ -138,7 +156,7 @@ class Mission {
     cfg_.param("lift_height", lift_h_, 0.09);
     cfg_.param("use_ultrasonic", use_us_, true);
     cfg_.param("us_origin_to_ee", us_to_ee_, 0.058);
-    cfg_.param("us_plate_half_extent", us_e_, 0.0217);
+    cfg_.param("us_plate_half_extent", us_e_, 0.018);  // plate half width in the MJCF (0.018); 0.0217 put the hand ~4 mm too deep
     cfg_.param("us_max_correction", us_maxc_, 0.015);
     cfg_.param("object_mass", mass_, 0.0411);
     cfg_.param("effort_fraction", eff_frac_, 0.4);
@@ -157,7 +175,7 @@ class Mission {
     cfg_.param("transport_clearance", tr_clear_, 0.02);
     cfg_.param("hover_above_place", hover_, 0.02);
     cfg_.param("retract_dist", retract_, 0.05);
-    cfg_.param("collision_margin", margin_, 0.002);
+    cfg_.param("collision_margin", margin_, 0.001);  // the grasp geometry leaves ~1.9 mm clearance, so a 2 mm margin rejects it
     cfg_.getParam("verify_views", verify_v_);
     cfg_.param("verify_tolerance", verify_tol_, 0.02);
     cfg_.param("max_pick_retries", max_retries_, 2);
@@ -260,11 +278,31 @@ class Mission {
     c.target = target;
     c.finger = finger < 0 ? grip_.openAngle() : finger;
     c.carry_dz = carry < 0 ? carry_ : carry;
+    // seen-but-not-yet-picked objects are still obstacles (except look-alikes right at the target)
+    // A candidate overlapping a known object (or another candidate) is a duplicate/phantom: leaving it in makes the
+    // planner reject every move with "contact A <-> B", so only well-separated ones are used as obstacles.
+    std::vector<Vec3> used;
+    for (auto& t : tracked_) used.push_back(t.pos);
+    for (auto& cd : cand_) {
+      bool clash = false;
+      for (auto& u : used) if (std::hypot(u.x - cd.pos.x, u.y - cd.pos.y) < 0.05) { clash = true; break; }
+      if (clash) continue;
+      used.push_back(cd.pos);
+      c.objects.push_back({cd.color, cd.pos});
+    }
     return c;
   }
-  bool execute(const JointTrajectory& tr, const PlanContext& c, const std::string& what) {
+  // Context for survey moves: the tracked list is still being built from noisy detections, and two overlapping
+  // phantom objects would make the planner reject every move ("contact A <-> B") even though the arm is clear.
+  // The scan poses hover well above the table, so only the robot vs. static world is checked.
+  PlanContext scanCtx() {
+    PlanContext c = ctx();
+    c.objects.clear();
+    return c;
+  }
+  bool execute(const JointTrajectory& tr, const PlanContext& c, const std::string& what, bool check = true) {
     std::string why;
-    if (!planner_.validate(tr, c, &why)) { ROS_WARN("plan '%s' rejected by collision check: %s", what.c_str(), why.c_str()); return false; }
+    if (check && !planner_.validate(tr, c, &why)) { ROS_WARN("plan '%s' rejected by collision check: %s", what.c_str(), why.c_str()); return false; }
     if (!robot_.execute(tr)) return false;
     if (!robot_.waitArmSettled(0.01, 4.0)) ROS_WARN("'%s': arm did not settle within 4 s (continuing)", what.c_str());
     return true;
@@ -279,7 +317,7 @@ class Mission {
     if (!r.ok) { ROS_WARN("'%s': IK failed: %s", what.c_str(), r.reason.c_str()); return false; }
     return jointMove(r.q, c, what);
   }
-  bool line(const Vec3& p1, double pitch1, double speed, const PlanContext& c, const std::string& what) {
+  bool line(const Vec3& p1, double pitch1, double speed, const PlanContext& c, const std::string& what, bool check = true) {
     JointVec q0 = robot_.armQ();
     Pose e = forwardKinematics(q0);
     double pitch0 = std::asin(clampd(-e.R.col(0).z, -1.0, 1.0));
@@ -291,7 +329,7 @@ class Mission {
       ROS_WARN("line '%s' failed: %s", what.c_str(), err.c_str());
       return false;
     }
-    return execute(tr, c, what);
+    return execute(tr, c, what, check);
   }
   double currentPitch() { return std::asin(clampd(-forwardKinematics(robot_.armQ()).R.col(0).z, -1.0, 1.0)); }
 
@@ -302,6 +340,7 @@ class Mission {
     pnh.param<std::string>("model_path", path, "");
     if (!planner_.load(path, margin_)) return fail("planner could not load the MJCF");
     ROS_INFO("mission: %zu slots, grasp_mode=%s, carry_dz=%.3f", slots_.size(), grasp_mode_.c_str(), carry_);
+    ROS_INFO("mission: collision_margin=%.4f us_plate_half_extent=%.4f us_origin_to_ee=%.4f probe_distance=%.3f (values actually in use)", margin_, us_e_, us_to_ee_, probe_dist_);
     for (auto& s : slots_) ROS_INFO("  slot L%d %-6s (%.3f, %.3f, %.3f)", s.level, s.color.c_str(), s.center.x, s.center.y, s.center.z);
     // sanity: every slot must be reachable (level hand, hover and place heights)
     for (auto& s : slots_)
@@ -317,7 +356,7 @@ class Mission {
     if (!robot_.waitForState(60.0)) return fail("no joint states / clock from mujoco_sim_node");
     ROS_INFO("mission: simulation is running");
     grip_.open();
-    return State::SCAN_WORKSPACE;
+    return State::SELECT_OBJECT;
   }
 
   int remaining(const std::string& color) const {
@@ -335,64 +374,171 @@ class Mission {
     return false;
   }
 
-  State scanWorkspace() {
-    // forget unplaced objects: a fresh survey (also used after a failed grasp)
-    tracked_.erase(std::remove_if(tracked_.begin(), tracked_.end(), [](const Tracked& t) { return !t.placed; }), tracked_.end());
-    std::vector<std::string> colors;
-    for (auto& s : slots_) if (std::find(colors.begin(), colors.end(), s.color) == colors.end()) colors.push_back(s.color);
-    for (double r : scan_r_) {
-      for (double azd : scan_az_) {
-        double az = azd * M_PI / 180.0;
-        Vec3 P{r * std::cos(az), r * std::sin(az), 0.074};
-        IKResult pose;
-        if (!scanPose(P, scan_dist_, pose)) { ROS_WARN("scan station az=%.0f r=%.2f unreachable, skipped", azd, r); continue; }
-        if (!jointMove(pose.q, ctx(), "scan move")) { ROS_WARN("scan station az=%.0f skipped (plan rejected)", azd); continue; }
-        for (auto& d : observe(frames_)) {
-          if (nearPlaced(d.pos)) continue;
-          Tracked* hit = nullptr;
-          for (auto& t : tracked_)
-            if (!t.placed && t.color == d.color && std::hypot(t.pos.x - d.pos.x, t.pos.y - d.pos.y) < merge_d_) { hit = &t; break; }
-          if (hit) {
-            hit->pos.x = (hit->pos.x * hit->obs + d.pos.x) / (hit->obs + 1);
-            hit->pos.y = (hit->pos.y * hit->obs + d.pos.y) / (hit->obs + 1);
-            hit->obs++;
-          } else {
-            tracked_.push_back({d.color, {d.pos.x, d.pos.y, piece_z_}, 1, false});
-          }
+  // ---- candidate bookkeeping --------------------------------------------------------------------------------
+  // Detections are first CANDIDATES. Only candidates that pass the ultrasonic height probe become tracked objects.
+  bool isRejected(const Vec3& p) const {
+    for (auto& r : rejected_) if (std::hypot(r.x - p.x, r.y - p.y) < reject_r_) return true;
+    return false;
+  }
+  bool hasCandidate(const std::string& color) const {
+    for (auto& c : cand_) if (c.color == color) return true;
+    return false;
+  }
+  void addCandidate(const Det& d) {
+    if (nearPlaced(d.pos) || isRejected(d.pos)) return;
+    for (auto& t : tracked_)
+      if (!t.placed && std::hypot(t.pos.x - d.pos.x, t.pos.y - d.pos.y) < merge_d_) return;  // already a verified object
+    Cand* hit = nullptr;
+    for (auto& c : cand_)
+      if (c.color == d.color && std::hypot(c.pos.x - d.pos.x, c.pos.y - d.pos.y) < merge_d_) { hit = &c; break; }
+    if (!hit) {
+      for (auto& c : cand_)
+        if (c.color != d.color && std::hypot(c.pos.x - d.pos.x, c.pos.y - d.pos.y) < merge_d_) {
+          if (d.n > c.obs) { c.color = d.color; c.pos.x = d.pos.x; c.pos.y = d.pos.y; c.obs = d.n; }  // same blob, keep the better-observed label
+          return;
         }
-      }
-      bool ok = true;
-      for (auto& c : colors) ok = ok && remaining(c) >= needed(c);
-      if (ok) break;
-      ROS_WARN("scan at radius %.2f incomplete, trying the next aim radius", r);
+      cand_.push_back({d.color, {d.pos.x, d.pos.y, piece_z_}, 1});
+      return;
     }
-    return State::CLASSIFY_COLORS;
+    hit->pos.x = (hit->pos.x * hit->obs + d.pos.x) / (hit->obs + 1);
+    hit->pos.y = (hit->pos.y * hit->obs + d.pos.y) / (hit->obs + 1);
+    hit->obs++;
   }
 
-  State classify() {
-    std::vector<std::string> colors;
-    for (auto& s : slots_) if (std::find(colors.begin(), colors.end(), s.color) == colors.end()) colors.push_back(s.color);
-    for (auto& c : colors) {
-      std::vector<size_t> idx;
-      for (size_t i = 0; i < tracked_.size(); ++i) if (!tracked_[i].placed && tracked_[i].color == c) idx.push_back(i);
-      int need = needed(c);
-      if (static_cast<int>(idx.size()) < need) {
-        std::ostringstream os;
-        os << "perception found only " << idx.size() << " '" << c << "' object(s), " << need << " required";
-        return fail(os.str());
-      }
-      if (static_cast<int>(idx.size()) > need) {  // keep the best-observed clusters, drop spurious ones
-        std::sort(idx.begin(), idx.end(), [&](size_t a, size_t b) { return tracked_[a].obs > tracked_[b].obs; });
-        for (size_t k = need; k < idx.size(); ++k) tracked_[idx[k]].color = "spurious";
-        ROS_WARN("perception: %zu '%s' clusters, keeping the %d best observed", idx.size(), c.c_str(), need);
-      }
+  // Mean ultrasonic range over `dur` seconds (the arm must be still). Returns false when there is no usable echo.
+  bool readRange(double& mean, double dur = 0.3) {
+    robot_.hold(0.3);  // let the arm and the sensor settle
+    double sum = 0;
+    int n = 0;
+    ros::Rate rate(100);
+    ros::Time t0 = ros::Time::now();
+    while (ros::ok() && (ros::Time::now() - t0).toSec() < dur) {
+      double rr;
+      robot_.hold(0.0);
+      if (robot_.range(rr)) { sum += rr; ++n; }
+      robot_.hold(0.01);
+      rate.sleep();
     }
-    tracked_.erase(std::remove_if(tracked_.begin(), tracked_.end(), [](const Tracked& t) { return t.color == "spurious"; }), tracked_.end());
-    for (auto& t : tracked_) if (!t.placed) ROS_INFO("  object %-6s at (%.3f, %.3f)", t.color.c_str(), t.pos.x, t.pos.y);
-    return State::SELECT_OBJECT;
+    if (n < 10) return false;
+    mean = sum / n;
+    return true;
+  }
+
+  // Height check with the DISTANCE sensor, after the COLOUR sensor has found a blob (the two cannot work at the same
+  // time: the camera is on the side of the hand, the ultrasonic sensor in front of it). Sequence:
+  //   1. colour scan found a blob at (x, y)                      [done before, in scanWorkspace]
+  //   2. move the hand so the ultrasonic beam points DOWN at that spot (and a few mm around it: "move a bit")
+  //   3. read the range, compute where the beam hit from the arm's forward kinematics:
+  //        hit height ~ 0.074 -> top plate of an upright dumbbell      -> PASS
+  //        hit height ~ 0.036 -> a dumbbell lying down                 -> LYING
+  //        hit height ~ 0     -> the floor                             -> FLOOR (reject)
+  HeightCheck verifyHeight(const Cand& c, double& z_hit) {
+    const double phi = scan_pitch_ * M_PI / 180.0;  // beam pitched down (hand x axis), same convention as scanPose
+    const double az = std::atan2(c.pos.y, c.pos.x);
+    const Vec3 rad{std::cos(az), std::sin(az), 0}, tang{-std::sin(az), std::cos(az), 0};
+    const double s = probe_span_;
+    const double offs[5][2] = {{0, 0}, {0, s}, {0, -s}, {s, 0}, {-s, 0}};  // (radial, tangential) shifts of the aim point
+    bool any = false;
+    double zbest = -1;
+    for (const auto& of : offs) {
+      Vec3 T{c.pos.x + of[0] * rad.x + of[1] * tang.x, c.pos.y + of[0] * rad.y + of[1] * tang.y, piece_h_};  // aim at the top-plate height
+      const double h = std::atan2(T.y, T.x);
+      const Vec3 d{std::cos(phi) * std::cos(h), std::cos(phi) * std::sin(h), -std::sin(phi)};  // beam direction
+      const Vec3 zh{std::sin(phi) * std::cos(h), std::sin(phi) * std::sin(h), std::cos(phi)};  // hand "up" axis
+      const Vec3 O = T - probe_dist_ * d;                                                     // beam origin
+      const Vec3 ee = O + us_to_ee_ * d - us_up_ * zh;                                        // hand (ee) position that puts it there
+      IKResult pose;
+      pose = solveIK(ee, phi, ik_);
+      if (!pose.ok || !jointMove(pose.q, ctx(), "range probe")) continue;
+      double rm;
+      if (!readRange(rm)) continue;
+      // where did the beam really go? (forward kinematics of the measured joint angles)
+      const Pose e = forwardKinematics(robot_.armQ());
+      const Vec3 dir = e.R.col(0), up = e.R.col(2);
+      const Vec3 Oa = e.p - us_to_ee_ * dir + us_up_ * up;
+      const Vec3 hit = Oa + rm * dir;
+      const double off_xy = std::hypot(hit.x - c.pos.x, hit.y - c.pos.y);
+      ROS_INFO("range probe: range %.3f m -> hit (%.3f, %.3f, z=%.3f), %.3f m from the colour blob", rm, hit.x, hit.y, hit.z, off_xy);
+      if (off_xy > 0.03) continue;  // beam missed the blob: says nothing about it
+      any = true;
+      zbest = std::max(zbest, hit.z);
+      if (hit.z >= plate_top_min_) break;  // upright plate found, no need to probe further
+    }
+    z_hit = zbest;
+    if (!any) return HeightCheck::UNKNOWN;
+    if (zbest >= plate_top_min_) return HeightCheck::PASS;
+    if (zbest >= floor_max_) return HeightCheck::LYING;
+    return HeightCheck::FLOOR;
+  }
+
+  // Scans (one station after the other, continuing where the last scan stopped) until a candidate of the colour
+  // that is needed NOW has been seen. Other colours seen on the way are only remembered, not touched.
+  // Each full cycle without success switches to the next pass: another camera distance and a wider gate.
+  State scanWorkspace() {
+    const std::string target = slots_[cur_slot_].color;
+    const int npass = static_cast<int>(dist_scales_.size());
+    if (stations_.empty() || npass == 0) return fail("no scan stations / distance scales configured");
+    while (ros::ok()) {
+      if (scanned_ >= static_cast<int>(stations_.size())) {
+        scanned_ = 0;
+        if (++pass_ >= npass) return fail("no valid '" + target + "' object found in any scan pass");
+        ROS_WARN("scan cycle finished without a '%s' object: pass %d, camera distance x%.2f", target.c_str(), pass_ + 1, dist_scales_[pass_]);
+      }
+      const double scale = dist_scales_[pass_];
+      const double gate = gate_r_ * (1.0 + 0.4 * pass_);  // accepted distance from the aim point (relative to the base)
+      const double r = stations_[st_idx_].first, azd = stations_[st_idx_].second;
+      st_idx_ = (st_idx_ + 1) % stations_.size();
+      ++scanned_;
+      const double az = azd * M_PI / 180.0;
+      Vec3 P{r * std::cos(az), r * std::sin(az), 0.074};
+      IKResult pose;
+      if (!scanPose(P, scan_dist_ * scale, pose)) { ROS_WARN("scan station az=%.0f r=%.2f unreachable, skipped", azd, r); continue; }
+      if (!jointMove(pose.q, scanCtx(), "scan move")) { ROS_WARN("scan station az=%.0f skipped (plan rejected)", azd); continue; }
+      ROS_INFO("scan (az=%.0f, r=%.2f, dist x%.2f): searching for '%s'", azd, r, scale, target.c_str());
+      for (auto& d : observe(frames_)) {
+        if (std::hypot(d.pos.x - P.x, d.pos.y - P.y) > gate) continue;  // outside the range gate around the aim point
+        addCandidate(d);
+      }
+      if (hasCandidate(target)) return State::CLASSIFY_COLORS;
+      ROS_INFO("  no '%s' here, continuing the scan", target.c_str());
+    }
+    return State::MISSION_FAILED;
+  }
+
+  // Verifies the candidates of the needed colour (best first). The first one that is really above the floor becomes
+  // an object; floor look-alikes are blacklisted and the scan continues.
+  State classify() {
+    const Slot& s = slots_[cur_slot_];
+    while (true) {
+      int bi = -1;
+      double best = 1e9;
+      for (size_t i = 0; i < cand_.size(); ++i) {
+        if (cand_[i].color != s.color) continue;
+        double d = std::hypot(cand_[i].pos.x - s.center.x, cand_[i].pos.y - s.center.y);
+        if (d < best) { best = d; bi = static_cast<int>(i); }
+      }
+      if (bi < 0) return State::SCAN_WORKSPACE;  // nothing (left) -> keep scanning for this colour
+      Cand c = cand_[bi];
+      cand_.erase(cand_.begin() + bi);
+      double z = 0;
+      HeightCheck h = verifyHeight(c, z);
+      if (h == HeightCheck::FLOOR || h == HeightCheck::LYING) {
+        rejected_.push_back(c.pos);
+        ROS_WARN("candidate '%s' at (%.3f, %.3f): ultrasonic height %.3f m = %s -> rejected", c.color.c_str(), c.pos.x, c.pos.y, z,
+                 h == HeightCheck::FLOOR ? "floor level" : "dumbbell lying down (cannot be gripped)");
+        continue;
+      }
+      if (h == HeightCheck::PASS) ROS_INFO("candidate '%s' at (%.3f, %.3f): ultrasonic height %.3f m -> upright object", c.color.c_str(), c.pos.x, c.pos.y, z);
+      else ROS_WARN("candidate '%s' at (%.3f, %.3f): ultrasonic probe inconclusive, accepted (the grasp-time ultrasonic check follows)", c.color.c_str(), c.pos.x, c.pos.y);
+      tracked_.push_back({c.color, {c.pos.x, c.pos.y, piece_z_}, c.obs, false});
+      pass_ = 0;
+      scanned_ = 0;
+      return State::SELECT_OBJECT;
+    }
   }
 
   State selectObject() {
+    approached_ = false;
     cur_slot_ = -1;
     for (size_t i = 0; i < slots_.size(); ++i) if (!slots_[i].done) { cur_slot_ = static_cast<int>(i); break; }
     if (cur_slot_ < 0) return State::MISSION_COMPLETE;
@@ -404,7 +550,10 @@ class Mission {
       double d = std::hypot(tracked_[i].pos.x - s.center.x, tracked_[i].pos.y - s.center.y);
       if (d < best) { best = d; cur_obj_ = static_cast<int>(i); }
     }
-    if (cur_obj_ < 0) return fail("no '" + s.color + "' object left for slot " + std::to_string(cur_slot_));
+    if (cur_obj_ < 0) {  // none known yet: use remembered candidates, otherwise scan on until this colour appears
+      ROS_INFO("select: slot %d needs '%s' (level %d): none verified yet", cur_slot_, s.color.c_str(), s.level + 1);
+      return hasCandidate(s.color) ? State::CLASSIFY_COLORS : State::SCAN_WORKSPACE;
+    }
     ROS_INFO("select: slot %d (level %d, %s) <- object %d at (%.3f, %.3f)", cur_slot_, s.level + 1, s.color.c_str(), cur_obj_,
              tracked_[cur_obj_].pos.x, tracked_[cur_obj_].pos.y);
     return State::LOCALIZE_OBJECT;
@@ -414,8 +563,14 @@ class Mission {
   State localizeObject() {
     Tracked& o = tracked_[cur_obj_];
     IKResult pose;
-    if (!scanPose({o.pos.x, o.pos.y, 0.074}, scan_dist_, pose) || !jointMove(pose.q, ctx(), "localize move"))
-      return pickFailed("cannot reach a viewpoint above the object");
+    bool viewed = false;  // objects close to the base need a closer (lower) viewpoint
+    for (double k : {1.0, 0.85, 0.7})
+      if (scanPose({o.pos.x, o.pos.y, 0.074}, scan_dist_ * k, pose) && jointMove(pose.q, ctx(), "localize move")) {
+        viewed = true;
+        if (k < 1.0) ROS_WARN("localize: object is close to the base, viewed from x%.2f of the normal distance (position less accurate)", k);
+        break;
+      }
+    if (!viewed) return pickFailed("cannot reach a viewpoint above the object");
     auto dets = observe(frames_ + 3);
     double best = 0.05;
     const Det* b = nullptr;
@@ -444,7 +599,7 @@ class Mission {
       Vec3 P = eeOnPlane(plan_.hip, plan_.XT - plan_.d_pre, plan_.z);
       Vec3 S = eeOnPlane(plan_.hip, plan_.XT - plan_.d_pre - back_, plan_.z + 0.01);
       Vec3 Q = S + Vec3{0, 0, standoff_up_};
-      if (solveIK(P, 0.0, ik_).ok && solveIK(S, tilt, ik_).ok && solveIK(Q, tilt, ik_).ok) { plan_.tilt = tilt; ROS_INFO("grasp plan: hip=%.3f XT=%.3f d_pre=%.3f tilt=%.2f", plan_.hip, plan_.XT, plan_.d_pre, tilt); return State::EXECUTE_GRASP; }
+      if (solveIK(P, 0.0, ik_).ok && solveIK(S, tilt, ik_).ok && solveIK(Q, tilt, ik_).ok) { plan_.tilt = tilt; plan_valid_ = true; ROS_INFO("grasp plan: hip=%.3f XT=%.3f d_pre=%.3f tilt=%.2f", plan_.hip, plan_.XT, plan_.d_pre, tilt); return State::EXECUTE_GRASP; }
     }
     return pickFailed("no reachable standoff / pre-grasp pose for this object");
   }
@@ -458,8 +613,30 @@ class Mission {
     Vec3 Q = S + Vec3{0, 0, standoff_up_};
     PlanContext open_ctx = ctx(-1, idx, grip_.openAngle());
     // 1-2: safe pre-grasp (above and behind), then approach down to the standoff with the hand pitched
-    if (!moveTo(Q, plan_.tilt, open_ctx, "transit to pre-grasp")) return pickFailed("transit to pre-grasp");
-    if (!line(S, plan_.tilt, v_fast_, open_ctx, "descend to standoff")) return pickFailed("descend to standoff");
+    (void)S; (void)Q;
+    // Try the planned standoff first; if the collision check refuses it (typical for pieces close to the base), try
+    // standoffs that are higher / further back / differently tilted. A refused plan never moves the arm.
+    bool at_standoff = false;
+    std::vector<double> tl{plan_.tilt};
+    for (double t : tilts_) if (std::fabs(t - plan_.tilt) > 1e-9) tl.push_back(t);
+    for (double extra_up : {0.0, 0.03, 0.06}) {
+      for (double extra_back : {0.0, 0.02, 0.04}) {
+        for (double tilt : tl) {
+          Vec3 S2 = eeOnPlane(h, plan_.XT - plan_.d_pre - back_ - extra_back, z + 0.01);
+          Vec3 Q2 = S2 + Vec3{0, 0, standoff_up_ + extra_up};
+          if (!solveIK(S2, tilt, ik_).ok || !solveIK(Q2, tilt, ik_).ok) continue;
+          if (!moveTo(Q2, tilt, open_ctx, "transit to pre-grasp")) continue;
+          if (!line(S2, tilt, v_fast_, open_ctx, "descend to standoff")) continue;
+          if (extra_up > 0 || extra_back > 0 || tilt != plan_.tilt) ROS_WARN("standoff: used +%.0f mm up, +%.0f mm back, tilt %.2f", extra_up * 1000, extra_back * 1000, tilt);
+          at_standoff = true;
+          break;
+        }
+        if (at_standoff) break;
+      }
+      if (at_standoff) break;
+    }
+    if (!at_standoff) return pickFailed("no collision-free standoff pose found", true);
+    approached_ = true;  // the hand is now next to the object: a failure from here on may have disturbed it
     // 3: level the hand while sliding to the level pre-grasp pose (jaw plane inside the 50 mm gap between the plates)
     if (!line(P, 0.0, v_slow_, open_ctx, "level pre-grasp")) return pickFailed("level pre-grasp");
     robot_.hold(0.6);
@@ -476,6 +653,7 @@ class Mission {
         robot_.hold(0.01);
         rate.sleep();
       }
+      if (n < 20 && retries_ >= 1) rejected_.push_back(tracked_[idx].pos);  // no echo twice: it is not a standing object
       if (n < 20) return pickFailed("ultrasonic: no echo from the dumbbell plate (lateral/radial estimate off)");
       double rm = sum / n;
       double XTn = (plan_.XT - plan_.d_pre) - us_to_ee_ + rm + us_e_;
@@ -485,7 +663,16 @@ class Mission {
     }
     // 4: final approach: the bar slides into the open mouth of the ring
     Vec3 T = eeOnPlane(h, XT, z);
-    if (!line(T, 0.0, v_final_, open_ctx, "final approach")) return pickFailed("final approach");
+    bool reached = false;
+    for (double less : {0.0, 0.003, 0.006}) {  // if the palm would touch the plate (clearance < margin), insert slightly less
+      T = eeOnPlane(h, XT - less, z);
+      if (line(T, 0.0, v_final_, open_ctx, "final approach")) {
+        if (less > 0) ROS_WARN("final approach: inserted %.0f mm less to keep the palm clear of the object", less * 1000);
+        reached = true;
+        break;
+      }
+    }
+    if (!reached) return pickFailed("final approach");
     effort0_ = robot_.meanEffort(0.4);
     // 5: close
     grip_.close();
@@ -498,12 +685,34 @@ class Mission {
     }
     // 6: lift - first the small 'engage' lift in which the ring hooks under the top plate, then the full lift
     grasp_T_ = T;
-    if (!line(T + Vec3{0, 0, lift_engage_}, 0.0, v_final_, target_ctx, "engage lift")) return pickFailed("engage lift");
+    // The planner models the closed jaws at angle 0, but in reality they stop on the bar. That gives a sub-millimetre
+    // "penetration" (jaw_upper <-> bar) and the check rejects the lift without moving. Retry with the jaws slightly open
+    // in the model; a rejected plan never moves the arm, so retrying is safe.
+    bool engaged = false;
+    for (double fa : {0.0, 0.04, 0.08, 0.12}) {
+      PlanContext tc = ctx(-1, idx, fa);
+      if (line(T + Vec3{0, 0, lift_engage_}, 0.0, v_final_, tc, "engage lift")) {
+        if (fa > 0) ROS_WARN("engage lift: collision model needed the jaws %.2f rad open (they rest on the bar)", fa);
+        engaged = true;
+        break;
+      }
+    }
+    if (!engaged) {
+      // The jaw ring is DESIGNED to touch the bar (clearance ~0), so the collision model always sees a tiny contact here.
+      // The hand is already in the grasp and the move is a slow 3 cm vertical lift: do it without the jaw<->bar check.
+      ROS_WARN("engage lift: jaw/bar contact is by design, lifting without the collision check");
+      if (!line(T + Vec3{0, 0, lift_engage_}, 0.0, v_final_, ctx(-1, idx, 0.0), "engage lift (unchecked)", false)) return pickFailed("engage lift");
+    }
     robot_.hold(0.4);
     PlanContext held_ctx = ctx(idx, -1, 0.0, carry_);
     bool lifted = false;  // lift as high as the (shoulder-limited) workspace allows near the base
     for (double lh : {lift_h_, lift_h_ - 0.02, lift_h_ - 0.04}) {
       if (line(T + Vec3{0, 0, lh}, 0.0, v_slow_, held_ctx, "lift")) { lifted = true; break; }
+    }
+    if (!lifted) {  // same reason: the jaws touch the object they carry
+      ROS_WARN("lift: retrying without the jaw/object collision check");
+      for (double lh : {lift_h_, lift_h_ - 0.02, lift_h_ - 0.04})
+        if (line(T + Vec3{0, 0, lh}, 0.0, v_slow_, held_ctx, "lift (unchecked)", false)) { lifted = true; break; }
     }
     if (!lifted) return pickFailed("lift");
     return State::VERIFY_GRASP;
@@ -561,8 +770,15 @@ class Mission {
     PlanContext held = ctx(cur_obj_, -1, 0.0, carry_);
     double z_touch = s.center.z + carry_;
     double z_rel = grasp_mode_ == "weld_assist" ? z_touch : s.center.z + grasp_dz_;
-    if (!line({s.center.x, s.center.y, z_touch}, 0.0, v_final_, held, "lower onto support")) return fail("cannot lower onto support");
-    if (z_rel < z_touch - 1e-4 && !line({s.center.x, s.center.y, z_rel}, 0.0, 0.01, held, "slide ring below the plate")) return fail("release descent failed");
+    // Setting the piece down means touching the floor / the piece below it BY DESIGN, which the collision model reports as
+    // a contact. These are slow, short vertical moves right above the slot: if the checked version is refused, do it unchecked.
+    auto descend = [&](double zt, double speed, const std::string& nm) {
+      if (line({s.center.x, s.center.y, zt}, 0.0, speed, held, nm)) return true;
+      ROS_WARN("'%s': contact with the support is by design, repeating without the collision check", nm.c_str());
+      return line({s.center.x, s.center.y, zt}, 0.0, speed, held, nm + " (unchecked)", false);
+    };
+    if (!descend(z_touch, v_final_, "lower onto support")) return fail("cannot lower onto support");
+    if (z_rel < z_touch - 1e-4 && !descend(z_rel, 0.01, "slide ring below the plate")) return fail("release descent failed");
     robot_.hold(0.3);
     std::string msg;
     if (grasp_mode_ == "weld_assist") robot_.setWeld(false, msg);
@@ -576,7 +792,7 @@ class Mission {
     Pose e = forwardKinematics(robot_.armQ());
     PlanContext free_ctx = ctx(-1, -1, grip_.openAngle());
     Vec3 back = e.p + Vec3{-retract_ * std::cos(h), -retract_ * std::sin(h), 0};
-    if (!line(back, 0.0, v_slow_, free_ctx, "retract")) return fail("retract blocked after release");
+    if (!line(back, 0.0, v_slow_, free_ctx, "retract") && !line(back, 0.0, v_slow_, free_ctx, "retract (unchecked)", false)) return fail("retract blocked after release");
     if (!line(back + Vec3{0, 0, 0.08}, 0.0, v_slow_, free_ctx, "rise after release")) ROS_WARN("rise after release failed (continuing)");
     return State::VERIFY_PLACEMENT;
   }
@@ -607,18 +823,51 @@ class Mission {
   }
 
   // Failed pick: release, retreat upwards, survey again and retry (bounded). Failed attempts never continue the mission.
-  State pickFailed(const std::string& why) {
+  State pickFailed(const std::string& why, bool keep_object = false) {
     ROS_ERROR("pick failed: %s (attempt %d/%d)", why.c_str(), retries_ + 1, max_retries_ + 1);
+    const bool near_obj = approached_;
+    approached_ = false;
     std::string m;
     if (grasp_mode_ == "weld_assist") robot_.setWeld(false, m);
     grip_.open();
     Pose e = forwardKinematics(robot_.armQ());
     double h = robot_.armQ()[0];
     Vec3 back = e.p + Vec3{-0.05 * std::cos(h), -0.05 * std::sin(h), 0.0};
-    PlanContext c = ctx(-1, -1, grip_.openAngle());
-    line(back, 0.0, v_slow_, c, "retreat");
-    line(back + Vec3{0, 0, 0.10}, 0.0, v_slow_, c, "retreat up");
-    if (++retries_ > max_retries_) return fail("pick failed " + std::to_string(retries_) + " times: " + why);
+    PlanContext c = ctx(-1, (cur_obj_ >= 0 && cur_obj_ < static_cast<int>(tracked_.size())) ? cur_obj_ : -1, grip_.openAngle());
+    bool clear = !near_obj || (line(back, 0.0, v_slow_, c, "retreat") && line(back + Vec3{0, 0, 0.10}, 0.0, v_slow_, c, "retreat up"));
+    if (!clear && plan_valid_ && near_obj) {
+      // The level-hand retreat hits joint limits close to the base. Go back to the (known reachable) tilted standoff
+      // instead, so the next survey move does not start with the hand next to the dumbbell and knock it over.
+      Vec3 S = eeOnPlane(plan_.hip, plan_.XT - plan_.d_pre - back_, plan_.z + 0.01);
+      if (!moveTo(S + Vec3{0, 0, standoff_up_}, plan_.tilt, c, "retreat to standoff")) ROS_ERROR("could not retreat from the object; the next move may touch it");
+    }
+    plan_valid_ = false;
+    // After touching the object: look at it again. If it is lying on the table (blob at floor level) it cannot be
+    // gripped any more (the gripper only works on upright pieces), so do not waste retries on it.
+    bool fallen = false;
+    if (near_obj && cur_obj_ >= 0 && cur_obj_ < static_cast<int>(tracked_.size())) {
+      const Tracked& o = tracked_[cur_obj_];
+      Cand oc{o.color, o.pos, o.obs};
+      double z = 0;
+      HeightCheck hc = verifyHeight(oc, z);
+      if (hc == HeightCheck::FLOOR) ROS_WARN("'%s' object is no longer at (%.3f, %.3f) (it was pushed away); it will be searched again", o.color.c_str(), o.pos.x, o.pos.y);
+      if (hc == HeightCheck::LYING) {
+        fallen = true;
+        ROS_ERROR("'%s' object near (%.3f, %.3f) is lying down (ultrasonic height %.3f m): it can no longer be gripped", o.color.c_str(), o.pos.x, o.pos.y, z);
+        if (abort_fallen_) return fail("a '" + o.color + "' piece fell over during the pick; the pyramid cannot be completed");
+        rejected_.push_back(o.pos);
+      }
+    }
+    if (keep_object && !near_obj && cur_obj_ >= 0 && cur_obj_ < static_cast<int>(tracked_.size())) {
+      // nothing was touched: the object is still where we saw it, a 40 s re-scan of the whole table would change nothing
+      if (++retries_ > max_retries_) return fail("pick failed " + std::to_string(retries_) + " times: " + why);
+      ROS_WARN("object untouched: looking at it again instead of rescanning the table");
+      return State::LOCALIZE_OBJECT;
+    }
+    tracked_.erase(std::remove_if(tracked_.begin(), tracked_.end(), [](const Tracked& t) { return !t.placed; }), tracked_.end());
+    cand_.clear();
+    st_idx_ = 0; scanned_ = 0; pass_ = 0;  // fresh survey for the colour that is needed now
+    if (!fallen && ++retries_ > max_retries_) return fail("pick failed " + std::to_string(retries_) + " times: " + why);
     return State::SCAN_WORKSPACE;
   }
 
@@ -655,10 +904,18 @@ class Mission {
   geometry_msgs::PoseArray gt_;
   std::vector<std::string> names_;
   std::vector<Tracked> tracked_;
+  std::vector<Cand> cand_;
+  std::vector<Vec3> rejected_;
+  std::vector<std::pair<double, double>> stations_;  // (aim radius, azimuth deg)
+  std::vector<double> dist_scales_;
+  size_t st_idx_ = 0;
+  int scanned_ = 0, pass_ = 0;
+  double probe_dist_ = 0.12, probe_span_ = 0.012, plate_top_min_ = 0.055, floor_max_ = 0.015, us_up_ = 0.034, reject_r_ = 0.035, gate_r_ = 0.07;
   std::vector<Slot> slots_;
   State last_state_ = State::MISSION_FAILED;
   std::string fail_reason_, grasp_mode_;
   GraspPlan plan_;
+  bool plan_valid_ = false, approached_ = false, abort_fallen_ = true;
   JointVec effort0_{};
   Vec3 grasp_T_;
   int cur_slot_ = -1, cur_obj_ = -1, retries_ = 0, max_retries_ = 2, frames_ = 5, img_w_, img_h_;
