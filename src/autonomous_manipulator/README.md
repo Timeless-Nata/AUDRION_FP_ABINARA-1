@@ -1,3 +1,29 @@
+[INFO] [1794295774.486574330, 171.024000000]: [state] CLASSIFY_COLORS
+[INFO] [1794295776.190694927, 172.718000000]: range probe: range 0.120 m -> hit (0.158, 0.313, z=0.074), 0.001 m from the colour blob
+[INFO] [1794295776.190723390, 172.718000000]: candidate 'orange' at (0.158, 0.313): ultrasonic height 0.074 m -> upright object
+[INFO] [1794295776.190742836, 172.718000000]: [state] SELECT_OBJECT
+[INFO] [1794295776.190752754, 172.718000000]: select: slot 2 (level 1, orange) <- object 2 at (0.158, 0.313)
+[INFO] [1794295776.190760905, 172.718000000]: [state] LOCALIZE_OBJECT
+[WARN] [1794295777.653425338, 174.180000000]: localize: object is close to the base, viewed from x0.70 of the normal distance (position less accurate)
+[INFO] [1794295778.394880269, 174.928000000]: localize: refined (0.1584,0.3132) -> (0.1552,0.2946)
+[INFO] [1794295778.394914078, 174.928000000]: [state] CALCULATE_GRASP
+[INFO] [1794295778.394938068, 174.928000000]: grasp plan: hip=1.098 XT=0.333 d_pre=0.030 tilt=0.30
+[INFO] [1794295778.394947342, 174.928000000]: [state] EXECUTE_GRASP
+[WARN] [1794295779.094083686, 175.632000000]: plan 'transit to pre-grasp' rejected by collision check: contact jaw_lower <-> dumbbell_6_orange (dist -0.000238)
+[WARN] [1794295779.095462126, 175.632000000]: plan 'transit to pre-grasp' rejected by collision check: contact jaw_lower <-> dumbbell_6_orange (dist -0.000612)
+[WARN] [1794295779.096941695, 175.634000000]: plan 'transit to pre-grasp' rejected by collision check: contact jaw_lower <-> dumbbell_6_orange (dist -0.000731)
+[WARN] [1794295779.098300483, 175.636000000]: plan 'transit to pre-grasp' rejected by collision check: contact jaw_lower <-> dumbbell_6_orange (dist 0.000183)
+[WARN] [1794295779.099790754, 175.638000000]: plan 'transit to pre-grasp' rejected by collision check: contact jaw_lower <-> dumbbell_6_orange (dist 0.000186)
+[WARN] [1794295783.938231711, 180.476000000]: standoff: used +0 mm up, +40 mm back, tilt 0.40 (candidate 6)
+[INFO] [1794295790.360647555, 186.898000001]: ultrasonic: range 0.0821 m -> bar-centre X 0.3450 (camera estimate 0.3329)
+[INFO] [1794295790.360704982, 186.898000001]: ultrasonic: tracked object moved 12.1 mm radially to (0.1607, 0.3054)
+[WARN] [1794295797.533401882, 194.070000001]: plan 'engage lift' rejected by collision check: contact jaw_upper <-> dumbbell_6_orange (dist -0.000117)
+[WARN] [1794295797.545689108, 194.070000001]: plan 'engage lift' rejected by collision check: contact jaw_upper <-> dumbbell_6_orange (dist -0.000115)
+[WARN] [1794295797.552565620, 194.088000001]: plan 'engage lift' rejected by collision check: contact jaw_upper <-> dumbbell_6_orange (dist -0.000115)
+[WARN] [1794295797.556278124, 194.088000001]: plan 'engage lift' rejected by collision check: contact jaw_upper <-> dumbbell_6_orange (dist -0.000113)
+[WARN] [1794295797.556297473, 194.088000001]: engage lift: jaw/bar contact is by design, lifting without the collision check
+
+
 # autonomous_manipulator – ROS1 + MuJoCo pyramid stacking
 
 Autonomous 3‑2‑1 pyramid (3 orange base, 2 green middle, 1 white top) built from the six dumbbells of your MJCF.

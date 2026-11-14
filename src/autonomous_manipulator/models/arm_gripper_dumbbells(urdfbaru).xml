@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="utf-8"?>
+<mujoco model="URDF_V1">
+  <compiler angle="radian" meshdir="meshes" autolimits="true" />
+  <option timestep="0.002" />
+  <asset>
+    <mesh name="base_link" file="base_link.STL" />
+    <mesh name="base_fixed" file="base fixed.STL" />
+    <mesh name="revolute_1" file="revolute 1.STL" />
+    <mesh name="revolute_2" file="revolute 2.STL" />
+    <mesh name="revolute_3" file="revolute 3.STL" />
+    <mesh name="revolute_4" file="revolute 4.STL" />
+    <mesh name="gripper_aktif" file="gripper aktif.STL" />
+    <mesh name="gripper_pasif" file="gripper pasif.STL" />
+  </asset>
+  <worldbody>
+    <body name="base_link">
+      <inertial pos="-0.000313700574300918 0.000730965640191826 0.0493341886906088" mass="0.376472657386427" fullinertia="0.000795920278932946 0.000793197829907901 0.00120141672933914 1.19002453471852E-06 -1.66603242386364E-06 3.19747584504412E-06" />
+      <geom name="base_link_visual" type="mesh" mesh="base_link" pos="0 0 0" euler="0 0 0" rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" contype="0" conaffinity="0" group="2" />
+      <geom name="base_link_collision" type="mesh" mesh="base_link" pos="0 0 0" euler="0 0 0" rgba="0 0 0 0" contype="1" conaffinity="1" group="3" />
+      <body name="base_fixed" pos="0 0 0" euler="0 0 0">
+        <inertial pos="-0.000313700574300918 0.000730965640191823 0.0493341886906088" mass="0.376472657386427" fullinertia="0.000795920278932946 0.000793197829907899 0.00120141672933913 1.19002453471851E-06 -1.66603242386364E-06 3.19747584504414E-06" />
+        <geom name="base_fixed_visual" type="mesh" mesh="base_fixed" pos="0 0 0" euler="0 0 0" rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" contype="0" conaffinity="0" group="2" />
+        <geom name="base_fixed_collision" type="mesh" mesh="base_fixed" pos="0 0 0" euler="0 0 0" rgba="0 0 0 0" contype="1" conaffinity="1" group="3" />
+        <body name="revolute_1" pos="0 0 0.094" euler="0 0 0">
+          <inertial pos="-0.00457471713583361 0.0122466478105479 0.024213526869468" mass="0.201925578650971" fullinertia="0.000166911391042119 0.000167702636917199 0.000190834817997564 4.50978544931236E-06 1.30486352718555E-05 -3.20077060555998E-05" />
+          <joint name="hip" type="hinge" pos="0 0 0" axis="0 0 1" range="-1.571 1.571" />
+          <geom name="revolute_1_visual" type="mesh" mesh="revolute_1" pos="0 0 0" euler="0 0 0" rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" contype="0" conaffinity="0" group="2" />
+          <geom name="revolute_1_collision" type="mesh" mesh="revolute_1" pos="0 0 0" euler="0 0 0" rgba="0 0 0 0" contype="1" conaffinity="1" group="3" />
+          <body name="revolute_2" pos="-0.016 0 0.055" euler="1.5708 0 0">
+            <inertial pos="0.0756926250363808 0.0522237497777846 0.0162654247125319" mass="0.0826056878564014" fullinertia="6.19825643478974E-05 0.000127532803795408 0.000179554179321899 -7.24637580091488E-05 -8.18552672803919E-07 -3.69645368016068E-07" />
+            <joint name="shoulder" type="hinge" pos="0 0 0" axis="0 0 1" range="-1.571 1.571" />
+            <geom name="revolute_2_visual" type="mesh" mesh="revolute_2" pos="0 0 0" euler="0 0 0" rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" contype="0" conaffinity="0" group="2" />
+            <geom name="revolute_2_collision" type="mesh" mesh="revolute_2" pos="0 0 0" euler="0 0 0" rgba="0 0 0 0" contype="1" conaffinity="1" group="3" />
+            <body name="revolute_3" pos="0.12471 0.082043 0" euler="0 0 0">
+              <inertial pos="0.0041597028303119 -0.140520311209242 -0.0113285918424134" mass="0.103327903737514" fullinertia="0.000437496527929318 2.04888319129973E-05 0.000446808055236204 2.30014948252356E-05 3.41965706285604E-07 -3.33380494894249E-06" />
+              <joint name="arm" type="hinge" pos="0 0 0" axis="0 0 -1" range="-1.571 1.571" />
+              <geom name="revolute_3_visual" type="mesh" mesh="revolute_3" pos="0 0 0" euler="0 0 0" rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" contype="0" conaffinity="0" group="2" />
+              <geom name="revolute_3_collision" type="mesh" mesh="revolute_3" pos="0 0 0" euler="0 0 0" rgba="0 0 0 0" contype="1" conaffinity="1" group="3" />
+              <body name="base_hand" pos="0.0088641 -0.21104 0" euler="0 0 0">
+                <body name="gripper_aktif" pos="0.052 -0.02 0.01785" euler="-1.5708 0 0">
+                  <inertial pos="0.0176827619535872 -0.00392815665178715 0.00940795306629792" mass="0.00690927635194885" fullinertia="6.03637133263742E-07 3.35648797208753E-06 3.90424060813539E-06 8.49905116441314E-07 -1.12457861830624E-08 2.49827564900531E-09" />
+                  <joint name="finger1" type="hinge" pos="0 0 0" axis="0 0 1" range="-1.571 1.571" />
+                  <geom name="gripper_aktif_visual" type="mesh" mesh="gripper_aktif" pos="0 0 0" euler="0 0 0" rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" contype="0" conaffinity="0" group="2" />
+                  <geom name="gripper_aktif_collision" type="mesh" mesh="gripper_aktif" pos="0 0 0" euler="0 0 0" rgba="0 0 0 0" contype="1" conaffinity="1" group="3" />
+                  <body name="end_gripper_aktif" pos="0.0725589048076606 -0.0010978766382652 0" euler="0 0 0">
+                    <inertial pos="-0.214698016550063 0.0228389909775466 0.0840534233196244" mass="0.83179465410391" fullinertia="0.00411988364647004 0.00642397375922391 0.00394888672072944 0.00011800764279541 -0.000231673967872838 0.000113839691030269" />
+                  </body>
+                </body>
+                <inertial pos="0.0341480764406583 0.00529177686282842 0.00880004496497522" mass="0.0302932133039992" fullinertia="8.29094211174954E-06 1.02751890721091E-05 8.1941147148822E-06 4.05446045674309E-07 1.05601283027232E-06 -4.44788358418727E-07" />
+                <joint name="hand" type="hinge" pos="0 0 0" axis="0 0 1" range="-1.571 1.571" />
+                <geom name="revolute_4_visual" type="mesh" mesh="revolute_4" pos="0 0 0" euler="0 0 0" rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" contype="0" conaffinity="0" group="2" />
+                <geom name="revolute_4_collision" type="mesh" mesh="revolute_4" pos="0 0 0" euler="0 0 0" rgba="0 0 0 0" contype="1" conaffinity="1" group="3" />
+                <body name="gripper_pasif" pos="0.052 -0.02 -0.01235" euler="-1.5708 0 0">
+                  <inertial pos="0.016425311499571 0.00369496847895995 0.00950000138942811" mass="0.00740954320988566" fullinertia="6.14409122664943E-07 3.54635874894949E-06 4.10025673349317E-06 -8.768978181811E-07 1.21420679419748E-13 9.25903749976887E-14" />
+                  <joint name="finger2" type="hinge" pos="0 0 0" axis="0 0 1" range="-1.571 1.571" />
+                  <geom name="gripper_pasif_visual" type="mesh" mesh="gripper_pasif" pos="0 0 0" euler="0 0 0" rgba="0.627450980392157 0.627450980392157 0.627450980392157 1" contype="0" conaffinity="0" group="2" />
+                  <geom name="gripper_pasif_collision" type="mesh" mesh="gripper_pasif" pos="0 0 0" euler="0 0 0" rgba="0 0 0 0" contype="1" conaffinity="1" group="3" />
+                  <body name="end_gripper_pasif" pos="0.0725251513298032 0.000962937685783646 0" euler="0 0 0">
+                    <inertial pos="-0.214664263072206 -0.00942182334650218 0.0840534233196247" mass="0.831794654103911" fullinertia="0.00411988364647004 0.00642397375922391 0.00394888672072944 0.000118007642795409 -0.000231673967872838 0.000113839691030269" />
+                  </body>
+                </body>
+                <site name="ee" pos="0.11 0 0" size="0.003" rgba="1 0 0 1" />
+                <body name="ultrasonic" pos="0.052 0 0.034" gravcomp="1">
+                  <geom type="box" size="0.001 0.018 0.008" pos="-0.009 0 0" rgba="0.1 0.25 0.6 1" contype="0" conaffinity="0" />
+                  <geom type="cylinder" fromto="-0.008 0.009 0 0 0.009 0" size="0.0065" rgba="0.85 0.85 0.88 1" contype="0" conaffinity="0" />
+                  <geom type="cylinder" fromto="-0.008 -0.009 0 0 -0.009 0" size="0.0065" rgba="0.85 0.85 0.88 1" contype="0" conaffinity="0" />
+                  <geom type="box" size="0.0125 0.006 0.002" pos="-0.0215 0 -0.006" rgba="0.15 0.15 0.17 1" contype="0" conaffinity="0" />
+                  <geom type="box" size="0.005 0.006 0.012" pos="-0.029 0 -0.012" rgba="0.15 0.15 0.17 1" contype="0" conaffinity="0" />
+                  <site name="ultrasonic_site" pos="0 0 0" zaxis="1 0 0" size="0.002" rgba="0 1 1 1" />
+                </body>
+                <body name="color_sensor" pos="0.0305 0.0145 0" gravcomp="1">
+                  <geom type="box" size="0.0005 0.004 0.006" rgba="0.7 0.1 0.1 1" contype="0" conaffinity="0" />
+                  <site name="color_site" pos="0 0 0" zaxis="1 0 0" size="0.002" rgba="1 0 1 1" />
+                  <camera name="color_cam" pos="0.0006 0 0" xyaxes="0 -1 0 0 0 1" fovy="20" />
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="hip_act" joint="hip" kp="15" kv="1.5" />
+    <position name="shoulder_act" joint="shoulder" kp="40" kv="4" />
+    <position name="arm_act" joint="arm" kp="25" kv="1" />
+    <position name="hand_act" joint="hand" kp="2" kv="0.03" />
+    <position name="finger1_act" joint="finger1" kp="0.3" kv="0.004" ctrlrange="0 1.5" forcerange="-0.05 0.05" />
+    <position name="finger2_act" joint="finger2" kp="0.3" kv="0.004" ctrlrange="0 1.5" forcerange="-0.05 0.05" />
+  </actuator>
+  <sensor>
+    <jointpos name="hip_pos" joint="hip" />
+    <jointpos name="shoulder_pos" joint="shoulder" />
+    <jointpos name="arm_pos" joint="arm" />
+    <jointpos name="hand_pos" joint="hand" />
+    <jointpos name="finger1_pos" joint="finger1" />
+    <jointpos name="finger2_pos" joint="finger2" />
+    <framepos name="ee_pos" objtype="site" objname="ee" />
+    <rangefinder name="ultrasonic_range" site="ultrasonic_site" />
+  </sensor>
+</mujoco>

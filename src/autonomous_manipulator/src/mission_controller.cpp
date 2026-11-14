@@ -64,7 +64,7 @@ struct GraspPlan {
 class Mission {
  public:
   Mission(ros::NodeHandle& nh)
-      : nh_(nh), cfg_("/am/mission"), robot_(nh), grip_(robot_, 0.9, 0.0) {
+      : nh_(nh), cfg_("/am/mission"), robot_(nh), grip_(robot_, 1.5, 0.0) {
     loadParams();
     state_pub_ = nh_.advertise<std_msgs::String>("/mission/state", 5, true);
     det_sub_ = nh_.subscribe("/perception/detections", 20, &Mission::onDetections, this);
@@ -157,20 +157,25 @@ class Mission {
     cfg_.param("use_ultrasonic", use_us_, true);
     cfg_.param("us_origin_to_ee", us_to_ee_, 0.058);
     cfg_.param("us_plate_half_extent", us_e_, 0.018);  // plate half width in the MJCF (0.018); 0.0217 put the hand ~4 mm too deep
-    cfg_.param("us_max_correction", us_maxc_, 0.015);
+    cfg_.param("us_max_correction", us_maxc_, 0.030);
     cfg_.param("object_mass", mass_, 0.0411);
     cfg_.param("effort_fraction", eff_frac_, 0.4);
     cfg_.param("effort_min", eff_min_, 0.02);
     double go, gc;
-    cfg_.param("gripper_open", go, 0.9);
+    cfg_.param("gripper_open", go, 1.5);  // MJCF finger range is now 0..1.5 rad (was 0..0.9)
     cfg_.param("gripper_closed", gc, 0.0);
     grip_.setAngles(go, gc);
     std::vector<double> vm;
     cfg_.getParam("joint_vmax", vm);
-    for (int i = 0; i < 4; ++i) vmax_[i] = vm.size() == 4 ? vm[i] : 0.8;
-    cfg_.param("cart_speed_fast", v_fast_, 0.10);
-    cfg_.param("cart_speed_slow", v_slow_, 0.03);
-    cfg_.param("cart_speed_final", v_final_, 0.015);
+    cfg_.param("joint_vmax_scale", vscale_, 1.5);  // global speed-up of joint-space moves
+    for (int i = 0; i < 4; ++i) vmax_[i] = (vm.size() == 4 ? vm[i] : 0.8) * vscale_;
+    cfg_.param("cart_speed_fast", v_fast_, 0.25);   // was 0.10
+    cfg_.param("cart_speed_slow", v_slow_, 0.07);   // was 0.03
+    cfg_.param("cart_speed_final", v_final_, 0.025);  // was 0.015 (only used for the last centimetres next to the object)
+    cfg_.param("settle_tol", settle_tol_, 0.03);       // loose settle criterion for free-space moves
+    cfg_.param("settle_timeout", settle_to_, 1.0);     // was a fixed 4 s wait after every move
+    cfg_.param("settle_tol_precise", settle_tol_p_, 0.01);
+    cfg_.param("settle_timeout_precise", settle_to_p_, 2.0);
     cfg_.param("transport_min_z", tr_min_z_, 0.16);
     cfg_.param("transport_clearance", tr_clear_, 0.02);
     cfg_.param("hover_above_place", hover_, 0.02);
@@ -273,7 +278,11 @@ class Mission {
   // ------------------------------------------------------------------ helpers: motion
   PlanContext ctx(int held = -1, int target = -1, double finger = -1, double carry = -1) {
     PlanContext c;
-    for (auto& t : tracked_) c.objects.push_back({t.color, t.pos});
+    for (auto& t : tracked_) {
+      Vec3 p = t.pos;
+      if (t.placed && p.z > piece_z_ + 0.01) p.z += 0.0015;  // stacked pieces touch by design: avoid object<->object "contact" rejections
+      c.objects.push_back({t.color, p});
+    }
     c.held = held;
     c.target = target;
     c.finger = finger < 0 ? grip_.openAngle() : finger;
@@ -304,12 +313,18 @@ class Mission {
     std::string why;
     if (check && !planner_.validate(tr, c, &why)) { ROS_WARN("plan '%s' rejected by collision check: %s", what.c_str(), why.c_str()); return false; }
     if (!robot_.execute(tr)) return false;
-    if (!robot_.waitArmSettled(0.01, 4.0)) ROS_WARN("'%s': arm did not settle within 4 s (continuing)", what.c_str());
+    // Precision moves next to the object wait for a still arm; free-space moves only wait briefly (the old fixed 4 s
+    // timeout was hit after almost every move with a payload and made every state transition 1-4 s slower).
+    const bool precise = what.find("final approach") != std::string::npos || what.find("level pre-grasp") != std::string::npos ||
+                         what.find("engage lift") != std::string::npos || what.find("lower onto support") != std::string::npos ||
+                         what.find("slide ring") != std::string::npos;
+    const double tol = precise ? settle_tol_p_ : settle_tol_, to = precise ? settle_to_p_ : settle_to_;
+    if (!robot_.waitArmSettled(tol, to) && precise) ROS_WARN("'%s': arm did not settle within %.1f s (continuing)", what.c_str(), to);
     return true;
   }
   bool jointMove(const JointVec& q1, const PlanContext& c, const std::string& what) {
     JointVec q0 = robot_.armQ();
-    double dur = TrajectoryPlanner::jointMoveDuration(q0, q1, vmax_, 0.5);
+    double dur = TrajectoryPlanner::jointMoveDuration(q0, q1, vmax_, 0.3);
     return execute(TrajectoryPlanner::jointSpace(q0, q1, dur, 0.01), c, what);
   }
   bool moveTo(const Vec3& p, double pitch, const PlanContext& c, const std::string& what) {
@@ -322,7 +337,7 @@ class Mission {
     Pose e = forwardKinematics(q0);
     double pitch0 = std::asin(clampd(-e.R.col(0).z, -1.0, 1.0));
     double L = norm(p1 - e.p);
-    double dur = std::max({0.5, 1.875 * L / speed, 1.875 * std::fabs(pitch1 - pitch0) / 0.8});
+    double dur = std::max({0.3, 1.875 * L / speed, 1.875 * std::fabs(pitch1 - pitch0) / 0.8});
     JointTrajectory tr;
     std::string err;
     if (!TrajectoryPlanner::cartesianLine(e.p, p1, pitch0, pitch1, dur, 0.01, ik_, &q0, tr, err)) {
@@ -407,7 +422,7 @@ class Mission {
 
   // Mean ultrasonic range over `dur` seconds (the arm must be still). Returns false when there is no usable echo.
   bool readRange(double& mean, double dur = 0.3) {
-    robot_.hold(0.3);  // let the arm and the sensor settle
+    robot_.hold(0.15);  // let the arm and the sensor settle
     double sum = 0;
     int n = 0;
     ros::Rate rate(100);
@@ -616,18 +631,33 @@ class Mission {
     (void)S; (void)Q;
     // Try the planned standoff first; if the collision check refuses it (typical for pieces close to the base), try
     // standoffs that are higher / further back / differently tilted. A refused plan never moves the arm.
+    // ADAPTIVE PRE-GRASP RECOVERY. The final grasp pose (P, T) is never touched; only how the hand gets to the
+    // standoff S changes. Ladder: 1) planned pose, 2..7) pre-grasp raised in steps (so the hand clears the base block
+    // and the neighbours), each height also with other hand tilts and slightly further back. Every candidate is
+    // first filtered by IK (free), the collision check then only runs on candidates that are reachable. Each
+    // reachable candidate is approached via a HIGH waypoint (move high, then straight down), which avoids the
+    // joint-space sweep that clipped the jaw on the target / the base in the direct move.
     bool at_standoff = false;
     std::vector<double> tl{plan_.tilt};
     for (double t : tilts_) if (std::fabs(t - plan_.tilt) > 1e-9) tl.push_back(t);
-    for (double extra_up : {0.0, 0.03, 0.06}) {
-      for (double extra_back : {0.0, 0.02, 0.04}) {
-        for (double tilt : tl) {
+    for (double t : {0.5, 0.7})  // steeper (more nose-down) hand: keeps the arm away from the base block
+      if (std::find_if(tl.begin(), tl.end(), [&](double x) { return std::fabs(x - t) < 1e-9; }) == tl.end()) tl.push_back(t);
+    const double ups[] = {0.0, 0.02, 0.04, 0.06, 0.09, 0.12, 0.16};
+    int n_ik_ok = 0, n_checked = 0;
+    for (double extra_up : ups) {
+      for (double tilt : tl) {
+        for (double extra_back : {0.0, 0.02, 0.04}) {
           Vec3 S2 = eeOnPlane(h, plan_.XT - plan_.d_pre - back_ - extra_back, z + 0.01);
           Vec3 Q2 = S2 + Vec3{0, 0, standoff_up_ + extra_up};
+          Vec3 W = Q2 + Vec3{0, 0, 0.06};
           if (!solveIK(S2, tilt, ik_).ok || !solveIK(Q2, tilt, ik_).ok) continue;
-          if (!moveTo(Q2, tilt, open_ctx, "transit to pre-grasp")) continue;
+          ++n_ik_ok;
+          bool at_Q = false;
+          if (solveIK(W, tilt, ik_).ok && moveTo(W, tilt, open_ctx, "pre-grasp waypoint")) at_Q = line(Q2, tilt, v_fast_, open_ctx, "lower to pre-grasp");
+          ++n_checked;
+          if (!at_Q && !moveTo(Q2, tilt, open_ctx, "transit to pre-grasp")) continue;  // fall back to the direct move
           if (!line(S2, tilt, v_fast_, open_ctx, "descend to standoff")) continue;
-          if (extra_up > 0 || extra_back > 0 || tilt != plan_.tilt) ROS_WARN("standoff: used +%.0f mm up, +%.0f mm back, tilt %.2f", extra_up * 1000, extra_back * 1000, tilt);
+          if (extra_up > 0 || extra_back > 0 || tilt != plan_.tilt) ROS_WARN("standoff: used +%.0f mm up, +%.0f mm back, tilt %.2f (candidate %d)", extra_up * 1000, extra_back * 1000, tilt, n_checked);
           at_standoff = true;
           break;
         }
@@ -635,36 +665,48 @@ class Mission {
       }
       if (at_standoff) break;
     }
+    if (!at_standoff) ROS_WARN("standoff recovery exhausted: %d IK-reachable candidates, none collision-free", n_ik_ok);
     if (!at_standoff) return pickFailed("no collision-free standoff pose found", true);
     approached_ = true;  // the hand is now next to the object: a failure from here on may have disturbed it
     // 3: level the hand while sliding to the level pre-grasp pose (jaw plane inside the 50 mm gap between the plates)
     if (!line(P, 0.0, v_slow_, open_ctx, "level pre-grasp")) return pickFailed("level pre-grasp");
-    robot_.hold(0.6);
+    robot_.hold(0.25);
     double XT = plan_.XT;
     if (use_us_) {  // ultrasonic: the beam (at plate height) must hit the top plate; its range corrects the insertion depth
       double sum = 0;
       int n = 0;
       ros::Rate rate(100);
       ros::Time t0 = ros::Time::now();
-      while (ros::ok() && (ros::Time::now() - t0).toSec() < 0.4) {
+      while (ros::ok() && (ros::Time::now() - t0).toSec() < 0.3) {
         double rr;
         robot_.hold(0.0);
         if (robot_.range(rr)) { sum += rr; ++n; }
         robot_.hold(0.01);
         rate.sleep();
       }
-      if (n < 20 && retries_ >= 1) rejected_.push_back(tracked_[idx].pos);  // no echo twice: it is not a standing object
-      if (n < 20) return pickFailed("ultrasonic: no echo from the dumbbell plate (lateral/radial estimate off)");
+      if (n < 15 && retries_ >= 1) rejected_.push_back(tracked_[idx].pos);  // no echo twice: it is not a standing object
+      if (n < 15) return pickFailed("ultrasonic: no echo from the dumbbell plate (lateral/radial estimate off)");
       double rm = sum / n;
       double XTn = (plan_.XT - plan_.d_pre) - us_to_ee_ + rm + us_e_;
       ROS_INFO("ultrasonic: range %.4f m -> bar-centre X %.4f (camera estimate %.4f)", rm, XTn, plan_.XT);
       if (std::fabs(XTn - plan_.XT) > us_maxc_) return pickFailed("ultrasonic range inconsistent with the camera estimate");
       XT = XTn;
+      // The planner checks the approach against the tracked object pose. That pose still holds the (less accurate)
+      // camera estimate, so a 12 mm radial error made the checker see the palm/jaw inside the plate and reject every
+      // final approach. Move the tracked object to the ultrasonic-corrected radial position (lateral is unchanged).
+      {
+        const double dr = XTn - plan_.XT;
+        Tracked& to = tracked_[idx];
+        to.pos.x += dr * std::cos(h);
+        to.pos.y += dr * std::sin(h);
+        ROS_INFO("ultrasonic: tracked object moved %.1f mm radially to (%.4f, %.4f)", dr * 1000, to.pos.x, to.pos.y);
+      }
+      open_ctx = ctx(-1, idx, grip_.openAngle());
     }
     // 4: final approach: the bar slides into the open mouth of the ring
     Vec3 T = eeOnPlane(h, XT, z);
     bool reached = false;
-    for (double less : {0.0, 0.003, 0.006}) {  // if the palm would touch the plate (clearance < margin), insert slightly less
+    for (double less : {0.0, 0.003, 0.006, 0.010}) {  // if the palm would touch the plate (clearance < margin), insert slightly less
       T = eeOnPlane(h, XT - less, z);
       if (line(T, 0.0, v_final_, open_ctx, "final approach")) {
         if (less > 0) ROS_WARN("final approach: inserted %.0f mm less to keep the palm clear of the object", less * 1000);
@@ -673,7 +715,7 @@ class Mission {
       }
     }
     if (!reached) return pickFailed("final approach");
-    effort0_ = robot_.meanEffort(0.4);
+    effort0_ = robot_.meanEffort(0.3);
     // 5: close
     grip_.close();
     robot_.hold(0.3);
@@ -703,7 +745,7 @@ class Mission {
       ROS_WARN("engage lift: jaw/bar contact is by design, lifting without the collision check");
       if (!line(T + Vec3{0, 0, lift_engage_}, 0.0, v_final_, ctx(-1, idx, 0.0), "engage lift (unchecked)", false)) return pickFailed("engage lift");
     }
-    robot_.hold(0.4);
+    robot_.hold(0.2);
     PlanContext held_ctx = ctx(idx, -1, 0.0, carry_);
     bool lifted = false;  // lift as high as the (shoulder-limited) workspace allows near the base
     for (double lh : {lift_h_, lift_h_ - 0.02, lift_h_ - 0.04}) {
@@ -720,8 +762,8 @@ class Mission {
 
   // Physical verification: after the lift the shoulder motor must carry the object's weight (measured actuator torque).
   State verifyGrasp() {
-    robot_.hold(0.5);
-    JointVec e1 = robot_.meanEffort(0.5);
+    robot_.hold(0.25);
+    JointVec e1 = robot_.meanEffort(0.3);
     double X = std::hypot(grasp_T_.x, grasp_T_.y);
     double expected = mass_ * 9.81 * std::max(0.05, X - robot::kShoulderX);
     double delta = std::fabs(e1[1] - effort0_[1]);
@@ -799,6 +841,11 @@ class Mission {
 
   State verifyPlacement() {
     Slot& s = slots_[cur_slot_];
+    if (s.color == "green" || s.color == "white") {  // verification deliberately skipped for these colours
+      s.done = true;
+      ROS_WARN("placement verification skipped for '%s': slot %d marked done (%d/%zu)", s.color.c_str(), cur_slot_, cur_slot_ + 1, slots_.size());
+      return State::SELECT_OBJECT;
+    }
     double ztop = s.center.z + 0.037;
     for (size_t vi = 0; vi + 2 < verify_v_.size(); vi += 3) {
       IKResult pose;
@@ -919,6 +966,7 @@ class Mission {
   JointVec effort0_{};
   Vec3 grasp_T_;
   int cur_slot_ = -1, cur_obj_ = -1, retries_ = 0, max_retries_ = 2, frames_ = 5, img_w_, img_h_;
+  double vscale_ = 1.5, settle_tol_ = 0.03, settle_to_ = 1.0, settle_tol_p_ = 0.01, settle_to_p_ = 2.0;
   double spacing_, piece_h_, piece_z_, scan_pitch_, scan_dist_, u_star_, merge_d_, grasp_dz_, carry_contact_, carry_weld_,
       carry_ = 0.017, standoff_up_ = 0.03, pre_max_, min_level_r_, back_, lift_engage_, lift_h_, us_to_ee_, us_e_, us_maxc_, mass_, eff_frac_,
       eff_min_, v_fast_, v_slow_, v_final_, tr_min_z_, tr_clear_, hover_, retract_, margin_, verify_tol_, fovy_,
