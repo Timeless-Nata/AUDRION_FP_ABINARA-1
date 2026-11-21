@@ -1,8 +1,10 @@
 <launch>
-  <!-- Phase 2/4: MuJoCo node (+ camera, range) and the perception node. Controller / mission come in later phases. -->
+  <!-- Phase 2/4: MuJoCo node (+ camera, range) and the perception node. Phase 3b: C++ motion node (replaces the Python one;
+       both offer /motion/move_to_pose and /motion/move_joints, so only one may run). -->
   <arg name="model_path" default="$(find autonomous_manipulator)/mjcf/scene.xml"/>
   <arg name="render" default="true"/>
   <arg name="perception" default="true"/>
+  <arg name="motion" default="true"/>
 
   <node name="mujoco_sim" pkg="autonomous_manipulator" type="mujoco_sim_node" output="screen">
     <rosparam command="load" file="$(find autonomous_manipulator)/config/simulation_config.yaml"/>
@@ -13,5 +15,10 @@
   <node name="perception" pkg="autonomous_manipulator" type="perception_node.py" output="screen" if="$(arg perception)">
     <rosparam command="load" file="$(find autonomous_manipulator)/config/camera_config.yaml"/>
     <param name="environment" value="simulation"/>
+  </node>
+
+  <node name="motion_control" pkg="autonomous_manipulator" type="motion_node" output="screen" if="$(arg motion)">
+    <rosparam command="load" file="$(find autonomous_manipulator)/config/motion_config.yaml"/>
+    <param name="robot_model_path" value="$(find autonomous_manipulator)/config/robot_model.txt"/>
   </node>
 </launch>

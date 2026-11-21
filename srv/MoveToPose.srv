@@ -1,0 +1,21 @@
+# Move the tool (MJCF site "grasp_center") to a pose in the world frame. Blocks until the motion has finished
+# and settled (or failed). The arm has 4 DOF: tool yaw follows the base azimuth and roll is fixed, so only the
+# tool PITCH (elevation of the tool +x axis, 0 = horizontal, negative = pointing down) is controllable.
+geometry_msgs/PoseStamped target      # header.frame_id must be "world" or empty. Orientation uses the ROS tool convention:
+                                      # x = gripper approach, y = left, z = up; identity = horizontal gripper along world +x,
+                                      # positive rotation about y pitches the gripper DOWN
+uint8 MODE_POSE=0                     # position + pitch taken from target.orientation (x axis elevation)
+uint8 MODE_POSITION=1                 # position only: the pitch closest to prefer_pitch that is reachable is used
+uint8 mode
+float32 prefer_pitch                  # [rad] MODE_POSITION only (0 = horizontal gripper)
+bool linear                           # true: straight Cartesian line from the current pose; false: joint-space move
+float32 duration                      # [s] 0 = automatic (fastest allowed by the velocity/acceleration limits)
+bool dry_run                          # plan + validate only, do not move
+---
+bool success
+string message
+float32[] q_goal                      # joint_1..joint_4 [rad]
+float32 duration                      # planned duration [s]
+float32 pos_error                     # [m]   |FK(measured q) - target| after the move (dry_run: IK residual)
+float32 pitch_error                   # [rad] target pitch - achieved pitch
+float32 orient_error                  # [rad] rotation error of the full requested orientation (MODE_POSE; roll/yaw are not controllable)

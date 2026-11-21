@@ -2,7 +2,7 @@
 <package format="2">
   <name>autonomous_manipulator</name>
   <version>0.1.0</version>
-  <description>Autonomous block-stacking manipulation (ROS1 Noetic, MuJoCo simulation, STM32 hardware). Phase 2: MuJoCo simulation node.</description>
+  <description>Autonomous block-stacking manipulation (ROS1 Noetic, MuJoCo simulation, STM32 hardware). Phase 2: MuJoCo simulation node. Phase 3: kinematics and motion control.</description>
   <maintainer email="user@example.com">arm_project</maintainer>
   <license>MIT</license>
 

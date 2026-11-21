@@ -1,0 +1,12 @@
+# Joint-space move of the 4 arm joints (gripper is not touched). Blocks until settled.
+string[] name                         # subset of joint_1..joint_4; unnamed joints keep their current value
+float64[] position                    # [rad]
+float32 duration                      # [s] 0 = automatic
+bool dry_run
+---
+bool success
+string message
+float32[] q_goal
+float32 duration
+float32[] tool_position               # FK of q_goal (world) [m]
+float32 tool_pitch                    # [rad]

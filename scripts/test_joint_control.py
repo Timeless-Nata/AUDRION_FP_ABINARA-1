@@ -96,11 +96,14 @@ def main():
     for n in names:
         lo, hi = LIMITS[n]
         step = 0.3 if base[n] + 0.3 <= hi - 0.05 else -0.3
+        if n == 'joint_3':
+            step = -0.3   # +q3 swings the forearm into base/rev1 (collision checker: free only for q3 <= ~0.54)
         tgt = dict(base)
         tgt[n] = base[n] + step
         get_contacts()                      # clear: log covers step + restore of this joint
         send(tgt)
         meas = state[n]
+        snap = [state[k] for k in ARM] + [state[GRIP]]   # full pose at the target (for mj_probe.py)
         err = abs(meas - tgt[n])
         others = max(abs(state[k] - base[k]) for k in names if k != n)
         ok = err <= args.tol and others <= args.tol
@@ -115,6 +118,8 @@ def main():
         print("%-14s target %+.3f measured %+.3f err %.3f other-joint drift %.3f  position %s  contacts %s  %s" %
               (n, tgt[n], meas, err, others,
                "ok" if pos_ok else "BAD", "ok" if contact_ok else "BAD", "PASS" if ok else "FAIL"))
+        if not contact_ok:
+            print("    pose at target -> python3 tools/mj_probe.py mjcf/scene.xml " + " ".join("%.4f" % v for v in snap))
         ok_all &= ok
     print("RESULT:", "PASS" if ok_all else "FAIL")
     return 0 if ok_all else 1
