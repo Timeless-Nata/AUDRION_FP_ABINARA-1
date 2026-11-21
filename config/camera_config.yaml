@@ -1,0 +1,21 @@
+# Camera / colour classification parameters, kept separate per environment.
+# OpenCV HSV scale: H 0-179, S 0-255, V 0-255.
+
+hardware:                      # USB webcam; values come from the user's calibrated block_color_detect.py
+  device: /dev/video4
+  backend: V4L2
+  width: 640
+  height: 480
+  colors:
+    orange: {lo: [7, 106, 120],  hi: [46, 255, 255]}
+    beige:  {lo: [0, 0, 171],    hi: [100, 151, 255]}
+    black:  {v_max: 104}       # brightness only (H and S ignored)
+  floor_green: {lo: [35, 50, 40], hi: [90, 255, 255]}   # real floor is green; used to find the horizon
+  horizon_row_fraction: 0.25
+  horizon_margin_px: 20
+  min_blob_area_px: 800
+  merge_kernel_px: 31
+
+simulation:                    # to be derived in Phase 4 from rendered MuJoCo camera frames
+  camera_name: esp32cam        # name inside arm.xml (the box webcam; rename pending)
+  # colour thresholds intentionally NOT copied from the hardware section

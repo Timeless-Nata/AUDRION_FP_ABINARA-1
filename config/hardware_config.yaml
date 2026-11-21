@@ -1,0 +1,27 @@
+# Physical robot configuration. Used from Phase 7 on (NOT by the simulation).
+# Everything marked UNVERIFIED must be measured on the real robot before motion is enabled.
+serial:
+  port: ""                     # MISSING: USB-to-TTL device path (e.g. /dev/ttyUSBx) - not provided yet
+  baud_rate: 115200
+  usart: USART2
+  stm32_tx_pin: PA2
+  stm32_rx_pin: PA3
+
+# Servo order = joint order in the MJCF. All servos are positional (~180 deg), not continuous.
+servos:
+  joint_1:       {model: MG996R, pin: PA0, timer_channel: TIM2_CH1, direction: -1, zero_offset_deg: 90.0, calibrated: false}
+  joint_2:       {model: MG996R, pin: PA6, timer_channel: TIM3_CH1, direction:  1, zero_offset_deg: 90.0, calibrated: false}
+  joint_3:       {model: MG996R, pin: PA7, timer_channel: TIM3_CH2, direction:  1, zero_offset_deg: 90.0, calibrated: false}
+  joint_4:       {model: MG996R, pin: PB0, timer_channel: TIM3_CH3, direction:  1, zero_offset_deg: 90.0, calibrated: false}
+  finger_active: {model: MG90S,  pin: PB1, timer_channel: TIM3_CH4, direction:  1, zero_offset_deg: 90.0, calibrated: false}
+# finger_passive has NO servo: it is slaved to finger_active by the gear.
+#
+# UNVERIFIED defaults: servo_deg = zero_offset_deg + direction * joint_deg.
+# joint_1: servo 0 deg is believed to be the robot's far-left side; MJCF +joint_1 turns left
+# (CCW about +z), so joint +90 deg <-> servo 0 deg, hence direction -1, offset 90.
+# Directions/offsets of joints 2-4 and the gripper are placeholders. No firmware calibration exists yet.
+
+hcsr04:
+  trig_pin: PB9
+  echo_pin: PB8                # 5 V echo: PB8 is 5 V tolerant on the STM32F103
+  # mounting pose: see body "hcsr04" in arm.xml (placeholder pose, verify on the real robot)
