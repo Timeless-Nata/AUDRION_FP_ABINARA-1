@@ -25,12 +25,26 @@
  *               Resting contact base_link <-> world is ignored. MuJoCo never generates contacts
  *               between a body and its direct parent, so those pairs cannot appear here.
  *
- * VIEWER KEYS: Space = pause/resume, Backspace = reset, Esc = quit,
+ * PERCEPTION INTERFACE (Phase 4; all rendering happens in this thread, GL context owner)
+ *   publishes   /camera/image_raw    sensor_msgs/Image   rgb8, <camera_width> x <camera_height>, from MJCF camera
+ *                                    <camera_name>; sites and the rangefinder ray are NOT drawn into it
+ *               /camera/camera_info  sensor_msgs/CameraInfo  pinhole K derived from the camera's fovy
+ *               /camera/pose         geometry_msgs/PoseStamped  OPTICAL frame (x right, y down, z forward)
+ *                                    in world; published just before the image with the same stamp
+ *               /hcsr04/range        sensor_msgs/Range   MuJoCo rangefinder; +inf = no echo, -inf = too close
+ *               /hcsr04/pose         geometry_msgs/PoseStamped  sensor site frame in world (+z = sensing axis)
+ *   A hidden window is created when render:=false so the camera still works (needs an X display).
+ *   Viewer shows the camera as an inset (key C toggles it).
+ *
+ * VIEWER KEYS: Space = pause/resume, Backspace = reset, Esc = quit, C = camera inset on/off,
  *              left drag = rotate, right drag = pan, Shift+drag = other plane, wheel = zoom.
  */
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
+#include <limits>
+#include <random>
 #include <map>
 #include <sstream>
 #include <utility>
@@ -42,6 +56,10 @@
 #include <mujoco/mujoco.h>
 #include <ros/ros.h>
 #include <sensor_msgs/JointState.h>
+#include <geometry_msgs/PoseStamped.h>
+#include <sensor_msgs/CameraInfo.h>
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/Range.h>
 #include <std_srvs/Empty.h>
 #include <std_srvs/Trigger.h>
 
@@ -60,6 +78,18 @@ class MujocoSimNode {
     pnh.param("render", render_, true);
     pnh.param("render_rate", render_rate_, 60.0);
     pnh.param("start_paused", paused_, false);
+    pnh.param("camera_enabled", camera_enabled_, true);
+    pnh.param<std::string>("camera_name", camera_name_, "esp32cam");
+    pnh.param("camera_width", cam_w_, 640);
+    pnh.param("camera_height", cam_h_, 480);
+    pnh.param("camera_rate", camera_rate_, 15.0);
+    pnh.param("camera_preview", preview_, true);
+    pnh.param<std::string>("range_sensor", range_name_, "hcsr04_range");
+    pnh.param("range_rate", range_rate_, 20.0);
+    pnh.param("range_noise_std", range_noise_, 0.0);
+    if (camera_rate_ <= 0.0 || range_rate_ <= 0.0 || cam_w_ <= 0 || cam_h_ <= 0) {
+      throw std::runtime_error("camera_rate, range_rate, camera_width and camera_height must be > 0");
+    }
     if (rtf_ <= 0.0 || joint_rate_ <= 0.0 || render_rate_ <= 0.0) {
       throw std::runtime_error("realtime_factor, joint_states_rate and render_rate must be > 0");
     }
@@ -74,9 +104,11 @@ class MujocoSimNode {
     reset_srv_ = nh.advertiseService("/sim/reset", &MujocoSimNode::onReset, this);
     contact_srv_ = nh.advertiseService("/sim/contact_report", &MujocoSimNode::onContactReport, this);
 
-    if (render_ && !initViewer()) {
-      ROS_WARN("Viewer could not be created: continuing headless.");
+    setupSensors(nh, pnh);
+    if ((render_ || camera_enabled_) && !initViewer()) {
+      ROS_WARN("Viewer/GL context could not be created: no window and NO CAMERA images (range still works).");
       render_ = false;
+      camera_enabled_ = false;
     }
     ROS_INFO("mujoco_sim ready: state -> %s, commands <- %s", js_topic.c_str(), cmd_topic.c_str());
   }
@@ -92,8 +124,12 @@ class MujocoSimNode {
     double sim_ref = data_->time;
     ros::WallTime next_pub = wall_ref;
     ros::WallTime next_render = wall_ref;
+    ros::WallTime next_cam = wall_ref;
+    ros::WallTime next_range = wall_ref;
     const ros::WallDuration pub_period(1.0 / joint_rate_);
     const ros::WallDuration render_period(1.0 / render_rate_);
+    const ros::WallDuration cam_period(1.0 / camera_rate_);
+    const ros::WallDuration range_period(1.0 / range_rate_);
     const int kMaxStepsPerIter = 100;
 
     while (ros::ok()) {
@@ -121,6 +157,14 @@ class MujocoSimNode {
       if (now >= next_pub) {
         publishJointStates();
         next_pub = (now - next_pub > pub_period) ? now + pub_period : next_pub + pub_period;
+      }
+      if (camera_enabled_ && now >= next_cam) {
+        captureCamera();
+        next_cam = (now - next_cam > cam_period) ? now + cam_period : next_cam + cam_period;
+      }
+      if (range_id_ >= 0 && now >= next_range) {
+        publishRange();
+        next_range = (now - next_range > range_period) ? now + range_period : next_range + range_period;
       }
       if (render_ && now >= next_render) {
         renderFrame();
@@ -333,12 +377,152 @@ class MujocoSimNode {
     joint_pub_.publish(msg);
   }
 
+  // ---------------------------------------------------------------- sensors (Phase 4)
+  void setupSensors(ros::NodeHandle& nh, ros::NodeHandle& pnh) {
+    std::string img_t, info_t, cpose_t, range_t, rpose_t;
+    pnh.param<std::string>("camera_image_topic", img_t, "/camera/image_raw");
+    pnh.param<std::string>("camera_info_topic", info_t, "/camera/camera_info");
+    pnh.param<std::string>("camera_pose_topic", cpose_t, "/camera/pose");
+    pnh.param<std::string>("range_topic", range_t, "/hcsr04/range");
+    pnh.param<std::string>("range_pose_topic", rpose_t, "/hcsr04/pose");
+    if (camera_enabled_) {
+      cam_id_ = mj_name2id(model_, mjOBJ_CAMERA, camera_name_.c_str());
+      if (cam_id_ < 0) {
+        ROS_WARN("camera '%s' not found in the model: camera disabled", camera_name_.c_str());
+        camera_enabled_ = false;
+      } else {
+        image_pub_ = nh.advertise<sensor_msgs::Image>(img_t, 2);
+        info_pub_ = nh.advertise<sensor_msgs::CameraInfo>(info_t, 2);
+        cam_pose_pub_ = nh.advertise<geometry_msgs::PoseStamped>(cpose_t, 5);
+      }
+    }
+    if (!range_name_.empty()) {
+      range_id_ = mj_name2id(model_, mjOBJ_SENSOR, range_name_.c_str());
+      if (range_id_ < 0 || model_->sensor_type[range_id_] != mjSENS_RANGEFINDER) {
+        ROS_WARN("rangefinder sensor '%s' not found: range publishing disabled", range_name_.c_str());
+        range_id_ = -1;
+      } else {
+        range_adr_ = model_->sensor_adr[range_id_];
+        range_site_ = model_->sensor_objid[range_id_];
+        range_max_ = model_->sensor_cutoff[range_id_] > 0 ? model_->sensor_cutoff[range_id_] : 4.0;
+        range_pub_ = nh.advertise<sensor_msgs::Range>(range_t, 5);
+        range_pose_pub_ = nh.advertise<geometry_msgs::PoseStamped>(rpose_t, 5);
+      }
+    }
+  }
+
+  // Pose from a MuJoCo position + row-major rotation matrix; column c of the matrix is scaled by sgn[c]
+  // (used to turn MuJoCo's camera frame, which looks along -z with +y up, into the optical frame).
+  static geometry_msgs::PoseStamped makePose(const ros::Time& t, const char* frame, const mjtNum* pos,
+                                             const mjtNum* mat, const double* sgn) {
+    mjtNum m[9], q[4];
+    for (int r = 0; r < 3; ++r) {
+      for (int c = 0; c < 3; ++c) m[3 * r + c] = mat[3 * r + c] * sgn[c];
+    }
+    mju_mat2Quat(q, m);
+    geometry_msgs::PoseStamped p;
+    p.header.stamp = t;
+    p.header.frame_id = frame;
+    p.pose.position.x = pos[0];
+    p.pose.position.y = pos[1];
+    p.pose.position.z = pos[2];
+    p.pose.orientation.w = q[0];
+    p.pose.orientation.x = q[1];
+    p.pose.orientation.y = q[2];
+    p.pose.orientation.z = q[3];
+    return p;
+  }
+
+  void captureCamera() {
+    mjv_updateScene(model_, data_, &cam_opt_, nullptr, &fixed_cam_, mjCAT_ALL, &scn_);
+    mjrRect vp = {0, 0, cam_w_, cam_h_};
+    mjr_setBuffer(mjFB_OFFSCREEN, &con_);
+    mjr_render(vp, &scn_, &con_);
+    mjr_readPixels(rgb_.data(), nullptr, vp, &con_);  // bottom-up rows
+    mjr_setBuffer(mjFB_WINDOW, &con_);
+
+    const ros::Time stamp = ros::Time::now();
+    static const double kOptical[3] = {1.0, -1.0, -1.0};  // MuJoCo cam (x right, y up, -z fwd) -> optical
+    cam_pose_pub_.publish(makePose(stamp, "world", data_->cam_xpos + 3 * cam_id_, data_->cam_xmat + 9 * cam_id_, kOptical));
+
+    sensor_msgs::Image img;
+    img.header.stamp = stamp;
+    img.header.frame_id = camera_name_ + "_optical";
+    img.height = cam_h_;
+    img.width = cam_w_;
+    img.encoding = "rgb8";
+    img.is_bigendian = 0;
+    img.step = 3 * cam_w_;
+    img.data.resize(static_cast<size_t>(img.step) * cam_h_);
+    for (int r = 0; r < cam_h_; ++r) {  // flip: OpenGL is bottom-up, ROS images are top-down
+      std::memcpy(&img.data[static_cast<size_t>(r) * img.step], &rgb_[static_cast<size_t>(cam_h_ - 1 - r) * img.step], img.step);
+    }
+    image_pub_.publish(img);
+
+    const double fovy = model_->cam_fovy[cam_id_] * M_PI / 180.0;
+    const double f = 0.5 * cam_h_ / std::tan(0.5 * fovy);
+    sensor_msgs::CameraInfo ci;
+    ci.header = img.header;
+    ci.height = cam_h_;
+    ci.width = cam_w_;
+    ci.distortion_model = "plumb_bob";
+    ci.D.assign(5, 0.0);
+    ci.K = {f, 0, 0.5 * cam_w_, 0, f, 0.5 * cam_h_, 0, 0, 1};
+    ci.R = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    ci.P = {f, 0, 0.5 * cam_w_, 0, 0, f, 0.5 * cam_h_, 0, 0, 0, 1, 0};
+    info_pub_.publish(ci);
+
+    updatePreview();
+  }
+
+  void updatePreview() {  // box-filter down to <= 320 px wide (mjr_drawPixels does not scale)
+    const int f = std::max(1, cam_w_ / 320);
+    prev_w_ = cam_w_ / f;
+    prev_h_ = cam_h_ / f;
+    preview_rgb_.assign(static_cast<size_t>(3) * prev_w_ * prev_h_, 0);
+    for (int y = 0; y < prev_h_; ++y) {
+      for (int x = 0; x < prev_w_; ++x) {
+        for (int c = 0; c < 3; ++c) {
+          int sum = 0;
+          for (int dy = 0; dy < f; ++dy) {
+            for (int dx = 0; dx < f; ++dx) sum += rgb_[(static_cast<size_t>(y * f + dy) * cam_w_ + (x * f + dx)) * 3 + c];
+          }
+          preview_rgb_[(static_cast<size_t>(y) * prev_w_ + x) * 3 + c] = static_cast<unsigned char>(sum / (f * f));
+        }
+      }
+    }
+  }
+
+  void publishRange() {
+    const ros::Time stamp = ros::Time::now();
+    static const double kIdentity[3] = {1.0, 1.0, 1.0};
+    range_pose_pub_.publish(makePose(stamp, "world", data_->site_xpos + 3 * range_site_, data_->site_xmat + 9 * range_site_, kIdentity));
+
+    const double kMin = 0.02;  // HC-SR04 datasheet minimum
+    double d = data_->sensordata[range_adr_];
+    sensor_msgs::Range r;
+    r.header.stamp = stamp;
+    r.header.frame_id = "hcsr04";
+    r.radiation_type = sensor_msgs::Range::ULTRASOUND;
+    r.field_of_view = 0.26;  // ~15 deg cone on the real part; the simulated sensor is a single ray
+    r.min_range = kMin;
+    r.max_range = range_max_;
+    if (d < 0.0 || d >= range_max_ - 1e-6) {
+      r.range = std::numeric_limits<float>::infinity();  // no echo
+    } else {
+      if (range_noise_ > 0.0) d += std::normal_distribution<double>(0.0, range_noise_)(rng_);
+      r.range = (d < kMin) ? -std::numeric_limits<float>::infinity() : static_cast<float>(std::min(d, range_max_));
+    }
+    range_pub_.publish(r);
+  }
+
   // ---------------------------------------------------------------- viewer
   bool initViewer() {
     if (!glfwInit()) {
       ROS_ERROR("glfwInit failed");
       return false;
     }
+    glfwWindowHint(GLFW_VISIBLE, render_ ? GLFW_TRUE : GLFW_FALSE);  // hidden window = camera-only mode
     window_ = glfwCreateWindow(1200, 900, "autonomous_manipulator - MuJoCo", nullptr, nullptr);
     if (!window_) {
       ROS_ERROR("glfwCreateWindow failed (is a display available?)");
@@ -355,6 +539,23 @@ class MujocoSimNode {
     mjv_makeScene(model_, &scn_, 2000);
     mjr_makeContext(model_, &con_, mjFONTSCALE_150);
     viewer_ready_ = true;
+    if (camera_enabled_) {
+      const int ow = model_->vis.global.offwidth, oh = model_->vis.global.offheight;
+      if (cam_w_ > ow || cam_h_ > oh) {
+        ROS_WARN("camera %dx%d exceeds the offscreen buffer %dx%d: clamping. Add <visual><global offwidth=\"%d\" "
+                 "offheight=\"%d\"/></visual> to the MJCF for the full size.",
+                 cam_w_, cam_h_, ow, oh, cam_w_, cam_h_);
+        cam_w_ = std::min(cam_w_, ow);
+        cam_h_ = std::min(cam_h_, oh);
+      }
+      rgb_.assign(static_cast<size_t>(3) * cam_w_ * cam_h_, 0);
+      mjv_defaultOption(&cam_opt_);  // what the camera sees: no site markers, no rangefinder ray
+      for (int g = 0; g < mjNGROUP; ++g) cam_opt_.sitegroup[g] = 0;
+      cam_opt_.flags[mjVIS_RANGEFINDER] = 0;
+      mjv_defaultCamera(&fixed_cam_);
+      fixed_cam_.type = mjCAMERA_FIXED;
+      fixed_cam_.fixedcamid = cam_id_;
+    }
     glfwSetWindowUserPointer(window_, this);
     glfwSetKeyCallback(window_, &MujocoSimNode::onKey);
     glfwSetMouseButtonCallback(window_, &MujocoSimNode::onMouseButton);
@@ -380,8 +581,17 @@ class MujocoSimNode {
     glfwGetFramebufferSize(window_, &viewport.width, &viewport.height);
     mjv_updateScene(model_, data_, &opt_, nullptr, &cam_, mjCAT_ALL, &scn_);
     mjr_render(viewport, &scn_, &con_);
+    if (camera_enabled_ && preview_ && !preview_rgb_.empty() && viewport.width > 0 && viewport.height > 0) {
+      const int margin = 10;
+      mjrRect pv = {viewport.width - prev_w_ - margin, margin, prev_w_, prev_h_};
+      mjrRect frame = {pv.left - 2, pv.bottom - 2, pv.width + 4, pv.height + 4};
+      mjr_rectangle(frame, 0.1f, 0.1f, 0.1f, 1.0f);
+      mjr_drawPixels(preview_rgb_.data(), nullptr, pv, &con_);
+      mjr_text(mjFONT_NORMAL, camera_name_.c_str(), &con_, static_cast<float>(pv.left) / viewport.width,
+               static_cast<float>(pv.bottom + pv.height + 4) / viewport.height, 1.0f, 1.0f, 1.0f);
+    }
     char text[160];
-    std::snprintf(text, sizeof(text), "sim time %.2f s%s\n[Space] pause  [Backspace] reset  [Esc] quit",
+    std::snprintf(text, sizeof(text), "sim time %.2f s%s\n[Space] pause  [Backspace] reset  [C] camera  [Esc] quit",
                   data_->time, paused_ ? "  (PAUSED)" : "");
     mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, viewport, text, nullptr, &con_);
     glfwSwapBuffers(window_);
@@ -400,6 +610,8 @@ class MujocoSimNode {
       if (!s->paused_) s->need_resync_ = true;
     } else if (key == GLFW_KEY_BACKSPACE) {
       s->resetState();
+    } else if (key == GLFW_KEY_C) {
+      s->preview_ = !s->preview_;
     } else if (key == GLFW_KEY_ESCAPE) {
       glfwSetWindowShouldClose(w, 1);
     }
@@ -463,6 +675,19 @@ class MujocoSimNode {
   mjrContext con_;
   bool btn_left_ = false, btn_right_ = false;
   double last_x_ = 0.0, last_y_ = 0.0;
+
+  // Phase 4 sensors
+  bool camera_enabled_ = true, preview_ = true;
+  std::string camera_name_, range_name_;
+  int cam_w_ = 640, cam_h_ = 480, cam_id_ = -1;
+  int prev_w_ = 0, prev_h_ = 0;
+  double camera_rate_ = 15.0, range_rate_ = 20.0, range_noise_ = 0.0, range_max_ = 4.0;
+  int range_id_ = -1, range_adr_ = 0, range_site_ = 0;
+  std::vector<unsigned char> rgb_, preview_rgb_;
+  mjvOption cam_opt_;
+  mjvCamera fixed_cam_;
+  std::mt19937 rng_{42};
+  ros::Publisher image_pub_, info_pub_, cam_pose_pub_, range_pub_, range_pose_pub_;
 };
 
 int main(int argc, char** argv) {

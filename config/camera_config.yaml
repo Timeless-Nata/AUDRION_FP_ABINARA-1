@@ -16,6 +16,23 @@ hardware:                      # USB webcam; values come from the user's calibra
   min_blob_area_px: 800
   merge_kernel_px: 31
 
-simulation:                    # to be derived in Phase 4 from rendered MuJoCo camera frames
+simulation:                    # rendered MuJoCo camera (node mujoco_sim, camera_name in simulation_config.yaml)
   camera_name: esp32cam        # name inside arm.xml (the box webcam; rename pending)
-  # colour thresholds intentionally NOT copied from the hardware section
+  # ---- colours of the dumbbells in scene.xml (materials dbl_yellow / dbl_green / dbl_white) -----------------
+  # UNVERIFIED STARTING VALUES derived from the material rgba (e.g. dbl_yellow 0.98 0.82 0.08 -> H 25, S 234)
+  # with margin for shading. They have NOT been checked on real rendered frames: use
+  # `rosservice call /perception/dump_frame` and the /perception/debug_image to tune them.
+  # Deliberately NOT copied from the hardware section (orange / beige / black do not exist in this scene).
+  colors:
+    yellow: {lo: [18, 130, 80],  hi: [34, 255, 255]}
+    green:  {lo: [50, 120, 40],  hi: [80, 255, 255]}
+    white:  {lo: [0, 0, 225],    hi: [179, 14, 255]}   # weakest: light floor / arena sectors are also bright, low-S
+  min_blob_area_px: 150        # a dumbbell is much smaller in the image than the 800 px used on hardware
+  merge_kernel_px: 7           # closes the gap between the two plates and the bar
+  max_blob_area_frac: 0.15     # blobs larger than this fraction of the image are floor/background, not objects
+  # ---- localisation -------------------------------------------------------------------------------------------
+  object_center_z: 0.0305      # world z of the dumbbell body centre; the blob-centre ray is cut with this plane
+  object_radius_m: 0.03        # used only for the HC-SR04 cross-check
+  arena: {radius_m: 0.37, min_x_m: -0.03}   # detections outside the half-disc (R = 0.35 m + margin) are dropped
+  range_gate_m: 0.04           # sensor axis must pass this close to an object for the range cross-check
+  range_tol_m: 0.04

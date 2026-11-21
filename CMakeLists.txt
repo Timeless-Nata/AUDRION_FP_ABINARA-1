@@ -3,7 +3,7 @@ project(autonomous_manipulator)
 
 add_compile_options(-std=c++17 -Wall -Wextra)
 
-find_package(catkin REQUIRED COMPONENTS roscpp rospy sensor_msgs std_srvs)
+find_package(catkin REQUIRED COMPONENTS roscpp rospy sensor_msgs std_srvs std_msgs geometry_msgs message_generation)
 find_package(glfw3 REQUIRED)   # sudo apt install libglfw3-dev
 
 # ---- MuJoCo location -------------------------------------------------------
@@ -35,7 +35,10 @@ endif()
 get_filename_component(MUJOCO_LIB_DIR "${MUJOCO_LIB}" DIRECTORY)
 message(STATUS "MuJoCo: ${MUJOCO_DIR} (${MUJOCO_LIB})")
 
-catkin_package(CATKIN_DEPENDS roscpp rospy sensor_msgs std_srvs)
+add_message_files(FILES DetectedObject.msg DetectedObjectArray.msg)
+generate_messages(DEPENDENCIES std_msgs geometry_msgs)
+
+catkin_package(CATKIN_DEPENDS roscpp rospy sensor_msgs std_srvs std_msgs geometry_msgs message_runtime)
 
 include_directories(${catkin_INCLUDE_DIRS} "${MUJOCO_DIR}/include")
 
@@ -44,7 +47,7 @@ target_link_libraries(mujoco_sim_node ${catkin_LIBRARIES} ${MUJOCO_LIB} glfw)
 set_target_properties(mujoco_sim_node PROPERTIES
   BUILD_RPATH "${MUJOCO_LIB_DIR}" INSTALL_RPATH "${MUJOCO_LIB_DIR}")
 
-catkin_install_python(PROGRAMS scripts/test_joint_control.py
+catkin_install_python(PROGRAMS scripts/test_joint_control.py scripts/perception_node.py scripts/test_perception.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION})
 
 install(DIRECTORY launch config mjcf meshes DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION})

@@ -1,11 +1,17 @@
 <launch>
-  <!-- Phase 2: only the MuJoCo node. Perception / controller / mission are added in later phases. -->
+  <!-- Phase 2/4: MuJoCo node (+ camera, range) and the perception node. Controller / mission come in later phases. -->
   <arg name="model_path" default="$(find autonomous_manipulator)/mjcf/scene.xml"/>
   <arg name="render" default="true"/>
+  <arg name="perception" default="true"/>
 
   <node name="mujoco_sim" pkg="autonomous_manipulator" type="mujoco_sim_node" output="screen">
     <rosparam command="load" file="$(find autonomous_manipulator)/config/simulation_config.yaml"/>
     <param name="model_path" value="$(arg model_path)"/>
     <param name="render" value="$(arg render)"/>
+  </node>
+
+  <node name="perception" pkg="autonomous_manipulator" type="perception_node.py" output="screen" if="$(arg perception)">
+    <rosparam command="load" file="$(find autonomous_manipulator)/config/camera_config.yaml"/>
+    <param name="environment" value="simulation"/>
   </node>
 </launch>
