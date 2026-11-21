@@ -18,6 +18,12 @@
  *               Targets are clamped to the actuator ctrlrange. Unknown joints and joints
  *               without an actuator (finger_passive) are ignored with a warning.
  *   service     /sim/reset (std_srvs/Empty): back to keyframe <keyframe>.
+ *   service     /sim/contact_report (std_srvs/Trigger): JSON in `message` listing every contact
+ *               that involved a robot geom since the previous call (checked after EVERY mj_step),
+ *               then clears the log. Per pair: bodies, geoms, min_dist [m] (negative = penetration),
+ *               count [steps], kind ("self" robot-robot, "env" robot-environment).
+ *               Resting contact base_link <-> world is ignored. MuJoCo never generates contacts
+ *               between a body and its direct parent, so those pairs cannot appear here.
  *
  * VIEWER KEYS: Space = pause/resume, Backspace = reset, Esc = quit,
  *              left drag = rotate, right drag = pan, Shift+drag = other plane, wheel = zoom.
@@ -26,6 +32,8 @@
 #include <cmath>
 #include <cstdio>
 #include <map>
+#include <sstream>
+#include <utility>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -35,6 +43,7 @@
 #include <ros/ros.h>
 #include <sensor_msgs/JointState.h>
 #include <std_srvs/Empty.h>
+#include <std_srvs/Trigger.h>
 
 class MujocoSimNode {
  public:
@@ -57,11 +66,13 @@ class MujocoSimNode {
 
     loadModel();
     buildJointTable();
+    buildContactMonitor(pnh);
     resetState();
 
     joint_pub_ = nh.advertise<sensor_msgs::JointState>(js_topic, 10);
     cmd_sub_ = nh.subscribe(cmd_topic, 10, &MujocoSimNode::onCommand, this);
     reset_srv_ = nh.advertiseService("/sim/reset", &MujocoSimNode::onReset, this);
+    contact_srv_ = nh.advertiseService("/sim/contact_report", &MujocoSimNode::onContactReport, this);
 
     if (render_ && !initViewer()) {
       ROS_WARN("Viewer could not be created: continuing headless.");
@@ -98,6 +109,7 @@ class MujocoSimNode {
         int steps = 0;
         while (data_->time < target && steps < kMaxStepsPerIter) {
           mj_step(model_, data_);
+          recordContacts();
           ++steps;
         }
         if (data_->time < target - 0.1) {  // cannot keep real time: drop the backlog
@@ -183,6 +195,91 @@ class MujocoSimNode {
     }
     mj_forward(model_, data_);
     need_resync_ = true;
+    contact_stats_.clear();
+  }
+
+  // ---------------------------------------------------------------- contact monitor
+  struct ContactStat {
+    int g1 = 0, g2 = 0;
+    double min_dist = 1e9;
+    long count = 0;
+    bool env = false;
+  };
+
+  void buildContactMonitor(ros::NodeHandle& pnh) {
+    std::string root_name;
+    pnh.param<std::string>("robot_root_body", root_name, "base_link");
+    robot_root_ = mj_name2id(model_, mjOBJ_BODY, root_name.c_str());
+    robot_body_.assign(model_->nbody, 0);
+    if (robot_root_ < 0) {
+      ROS_WARN("robot_root_body '%s' not found: contact monitor disabled", root_name.c_str());
+      return;
+    }
+    for (int b = 1; b < model_->nbody; ++b) {
+      for (int a = b; a > 0; a = model_->body_parentid[a]) {
+        if (a == robot_root_) {
+          robot_body_[b] = 1;
+          break;
+        }
+      }
+    }
+  }
+
+  std::string bodyLabel(int b) const {
+    const char* n = mj_id2name(model_, mjOBJ_BODY, b);
+    return n ? std::string(n) : "body#" + std::to_string(b);
+  }
+
+  std::string geomLabel(int g) const {
+    const char* n = mj_id2name(model_, mjOBJ_GEOM, g);
+    if (n && *n) return n;
+    if (model_->geom_type[g] == mjGEOM_MESH && model_->geom_dataid[g] >= 0) {
+      const char* m = mj_id2name(model_, mjOBJ_MESH, model_->geom_dataid[g]);
+      if (m) return m;
+    }
+    return "geom#" + std::to_string(g);
+  }
+
+  void recordContacts() {
+    if (robot_root_ < 0) return;
+    for (int i = 0; i < data_->ncon; ++i) {
+      const mjContact& c = data_->contact[i];
+      const int b1 = model_->geom_bodyid[c.geom1];
+      const int b2 = model_->geom_bodyid[c.geom2];
+      const bool r1 = robot_body_[b1] != 0, r2 = robot_body_[b2] != 0;
+      if (!r1 && !r2) continue;  // e.g. block vs block, block vs floor
+      if ((b1 == robot_root_ && b2 == 0) || (b2 == robot_root_ && b1 == 0)) continue;  // base resting on plate
+      const int lo = std::min(c.geom1, c.geom2), hi = std::max(c.geom1, c.geom2);
+      ContactStat& st = contact_stats_[std::make_pair(lo, hi)];
+      st.g1 = lo;
+      st.g2 = hi;
+      st.env = !(r1 && r2);
+      st.min_dist = std::min(st.min_dist, static_cast<double>(c.dist));
+      ++st.count;
+    }
+  }
+
+  bool onContactReport(std_srvs::Trigger::Request&, std_srvs::Trigger::Response& res) {
+    std::ostringstream o;
+    o.precision(6);
+    o << "{\"sim_time\": " << data_->time << ", \"contacts\": [";
+    bool first = true;
+    for (const auto& kv : contact_stats_) {
+      const ContactStat& st = kv.second;
+      if (!first) o << ", ";
+      first = false;
+      o << "{\"kind\": \"" << (st.env ? "env" : "self") << "\""
+        << ", \"body1\": \"" << bodyLabel(model_->geom_bodyid[st.g1]) << "\""
+        << ", \"geom1\": \"" << geomLabel(st.g1) << "\""
+        << ", \"body2\": \"" << bodyLabel(model_->geom_bodyid[st.g2]) << "\""
+        << ", \"geom2\": \"" << geomLabel(st.g2) << "\""
+        << ", \"min_dist\": " << st.min_dist << ", \"count\": " << st.count << "}";
+    }
+    o << "]}";
+    contact_stats_.clear();
+    res.success = true;
+    res.message = o.str();
+    return true;
   }
 
   // ---------------------------------------------------------------- ROS callbacks
@@ -353,6 +450,10 @@ class MujocoSimNode {
   ros::Publisher joint_pub_;
   ros::Subscriber cmd_sub_;
   ros::ServiceServer reset_srv_;
+  ros::ServiceServer contact_srv_;
+  int robot_root_ = -1;
+  std::vector<char> robot_body_;
+  std::map<std::pair<int, int>, ContactStat> contact_stats_;
 
   GLFWwindow* window_ = nullptr;
   bool viewer_ready_ = false;

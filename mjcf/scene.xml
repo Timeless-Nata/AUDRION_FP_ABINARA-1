@@ -34,7 +34,7 @@
     <geom name="stack_zone" type="box" pos="0.160697 -0.191511 0.0016" size="0.061 0.03 0.0004" quat="0.939693 0 0 0.34202" material="zone_stack" contype="0" conaffinity="0" group="2"/>
     <!-- BLOCKS (free bodies) at their initial pickup-area positions -->
     <!-- DUMBBELL (TargetFP.STEP): stands upright, bar axis = z. total mass 0.03 kg. position from seed 7 -->
-    
+
     <body name="db_green_2" pos="0.181809 -0.224054 0.0305" quat="0.902802 0 0 -0.430057">   <!-- copy of the dumbbell body -->
       <freejoint name="free_db_green_2"/>
       <geom name="db_green_2_plate_low" type="mesh" mesh="dumbbell_plate" pos="0 0 -0.025" mass="0.00946018" friction="1 0.01 0.0005" condim="4" material="dbl_green"/>
