@@ -1,0 +1,21 @@
+# Parameters of the MuJoCo simulation node (loaded into its private namespace).
+# model_path is NOT set here: it is the launch argument `model_path`.
+keyframe: home                 # keyframe in scene.xml used at start / reset ("" = default pose)
+realtime_factor: 1.0           # simulated seconds per wall-clock second
+joint_states_rate: 100.0       # Hz
+render: true                   # GLFW viewer window (set false for headless)
+render_rate: 60.0              # Hz
+start_paused: false
+joint_states_topic: /arm/joint_states
+joint_command_topic: /arm/joint_command
+
+# ---- Phase 4: perception sensors -------------------------------------------------------------------------
+camera_enabled: true           # offscreen camera render (needs a GL context; hidden window if render: false)
+camera_name: esp32cam
+camera_width: 640              # must not exceed <visual><global offwidth/offheight> of the MJCF (default 640x480)
+camera_height: 480
+camera_rate: 15.0              # Hz
+camera_preview: true           # inset in the viewer window (key C toggles)
+range_sensor: hcsr04_range     # MJCF rangefinder sensor ("" = off)
+range_rate: 20.0               # Hz
+range_noise_std: 0.0           # m, gaussian; 0 = ideal

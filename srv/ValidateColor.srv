@@ -1,0 +1,14 @@
+# Find a camera view that shows exactly ONE dumbbell colour at `target` and report that colour (Phase 4).
+# The caller supplies the dumbbell position (e.g. from the HC-SR04 range and the arm pose). The camera does not
+# locate anything: it only validates the colour. The arm moves through /motion/move_joints.
+geometry_msgs/Point target            # dumbbell centre, world frame [m]
+bool dry_run                          # plan the first view only, do not move
+---
+bool success                          # true = exactly one colour found
+string color                          # "orange" | "black" | "beige" ("" if none); the best guess when ambiguous
+float32 confidence                    # 0..1
+string status                         # UNIQUE | AMBIGUOUS | NO_OBJECT | UNREACHABLE
+int32 attempts                        # camera frames evaluated
+float32[] q_view                      # joint_1..joint_4 of the last view [rad]
+string[] trace                        # one line per attempt
+string message

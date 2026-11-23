@@ -1,0 +1,21 @@
+# Phase 4b: parameters of color_view_node (C++). robot_model_path is set by the launch file.
+image_topic: /camera/image_raw
+joint_states_topic: /arm/joint_states
+collision_margin: 0.003       # m   observation poses keep this clearance between links
+
+# colour decision (the HSV thresholds of the simulation are in code: ColorConfig::simulationDefaults)
+min_fraction: 0.03            # dominant colour must cover this share of the region of interest
+max_second_ratio: 0.15        # a second colour above 15 % of the dominant one = ambiguous -> move the camera
+roi_x0: 0.0
+roi_x1: 1.0
+roi_y0: 0.0
+roi_y1: 1.0
+
+# view search: closer first, then sideways away from the second colour, then steeper
+pitch_deg: -65.0
+standoffs: [0.12, 0.10, 0.08] # m
+lateral_steps: [0.02, 0.04]   # m
+steeper_pitches_deg: [-70.0]
+steeper_standoff: 0.065       # m
+max_attempts: 6
+frame_wait: 0.4               # s pause after a move before a frame is accepted

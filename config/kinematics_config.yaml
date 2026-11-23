@@ -1,0 +1,25 @@
+# Phase 3 motion control parameters (loaded into the private namespace of motion_control_node).
+# mjcf_path comes from the launch argument `model_path` (the kinematic model is read straight from the MJCF).
+tool_site: grasp_center
+joint_states_topic: /arm/joint_states
+joint_command_topic: /arm/joint_command
+home_q: [0.0, 0.8901, 0.4538, -0.4363]   # = keyframe "home" of scene.xml (tool horizontal, ~19 cm ahead of the base)
+
+# limits used for trajectory generation (servos are far faster; these keep the payload stable)
+vmax: 1.5              # rad/s per joint
+amax: 6.0              # rad/s^2
+tool_speed: 0.08       # m/s on Cartesian lines
+control_rate: 100.0    # Hz, rate of /arm/joint_command while moving
+safety_margin: 0.03    # rad kept away from the MJCF joint limits
+min_tool_z: 0.012      # m, grasp_center never below this
+min_link_z: 0.020      # m, elbow / wrist never below this
+
+# simulated servos are P-controllers: gravity sags the arm (about 2.3 deg at the shoulder in the home pose).
+gravity_comp: true     # feed-forward from the MJCF masses. Set false for the REAL robot unless re-derived
+payload_kg: 0.0        # raise to 0.03 while a dumbbell is held (Phase 5)
+integral_gain: 1.5     # 1/s residual trim from measured joint states (simulation only: real servos report nothing)
+settle_tol: 0.004      # rad
+settle_time: 0.25      # s
+settle_timeout: 3.0    # s
+pos_tol: 0.004         # m   a move reports failure when the final tool error is larger
+pitch_tol_deg: 3.0

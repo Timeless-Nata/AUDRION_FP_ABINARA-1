@@ -1,0 +1,23 @@
+# Phase 3b: parameters of motion_node (C++). robot_model_path is set by the launch file.
+joint_states_topic: /arm/joint_states
+joint_command_topic: /arm/joint_command
+home_q: [0.0, 0.8901, 0.35, -0.540]   # = keyframe "home" of scene.xml; used as the fallback via point of joint-space moves
+
+# trajectory timing: CONFIG values chosen to keep the payload stable, they are NOT servo specifications
+vmax: 1.0              # rad/s per joint
+amax: 4.0              # rad/s^2
+tool_speed: 0.08       # m/s on Cartesian lines
+control_rate: 100.0    # Hz of /arm/joint_command while moving
+
+# safety
+safety_margin: 0.03    # rad kept away from the joint limits
+collision_margin: 0.002 # m  links closer than this count as colliding (revolute_1 on the base is excluded by design)
+min_tool_z: 0.012      # m  tool never below this on a line
+finger_angle: -0.7     # finger_active angle assumed in collision checks (open gripper)
+
+# settling. integral_gain trims the command from the MEASURED joint angles: it compensates the sag of the simulated
+# P-servos. Real servos report no angle, so keep it 0 on hardware.
+integral_gain: 3.0
+settle_tol: 0.004      # rad
+settle_time: 0.25      # s
+settle_timeout: 3.0    # s

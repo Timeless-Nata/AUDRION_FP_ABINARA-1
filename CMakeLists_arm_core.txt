@@ -1,0 +1,35 @@
+# ===== Phase 3a/3b: arm core (pure C++17: no ROS, no MuJoCo, no Eigen) + C++ motion node ==============================
+# Paste this block into CMakeLists.txt AFTER catkin_package(...) and include_directories(...).
+add_library(arm_core STATIC
+  src/control/robot_model.cpp
+  src/control/kinematics.cpp
+  src/control/collision_checker.cpp
+  src/control/inverse_kinematics.cpp
+  src/control/trajectory.cpp
+  src/control/motion_planner.cpp
+  src/control/executor.cpp
+  src/control/color_classifier.cpp
+  src/control/view_planner.cpp
+  src/control/view_search.cpp)
+target_include_directories(arm_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
+add_executable(arm_core_cli src/tools/arm_core_cli.cpp)
+target_link_libraries(arm_core_cli arm_core)
+
+add_executable(arm_core_test test/test_core.cpp)
+target_link_libraries(arm_core_test arm_core)
+
+add_executable(arm_motion_test test/test_motion.cpp)
+target_link_libraries(arm_motion_test arm_core)
+
+add_executable(arm_color_test test/test_color.cpp)
+target_link_libraries(arm_color_test arm_core)
+
+add_executable(arm_view_test test/test_view.cpp)
+target_link_libraries(arm_view_test arm_core)
+
+# ROS node (needs the generated service headers)
+add_executable(motion_node src/control/motion_node.cpp)
+add_dependencies(motion_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries(motion_node arm_core ${catkin_LIBRARIES})
+# and remove scripts/motion_control_node.py from catkin_install_python(...) if you no longer use the Python node.
